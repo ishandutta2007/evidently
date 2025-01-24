@@ -10,6 +10,7 @@ from evidently.base_metric import ColumnName
 from evidently.base_metric import ColumnNotFound
 from evidently.base_metric import DataDefinition
 from evidently.base_metric import InputData
+from evidently.base_metric import UsesRawDataMixin
 from evidently.calculations.data_drift import ColumnDataDriftMetrics
 from evidently.calculations.data_drift import ColumnType
 from evidently.calculations.data_drift import DistributionIncluded
@@ -55,7 +56,6 @@ def get_one_column_drift(
 
     target = data_definition.get_target_column()
     stattest = None
-    threshold = None
     if column.is_main_dataset():
         if target and column.name == target.column_name and column_type == ColumnType.Numerical:
             stattest = options.num_target_stattest_func
@@ -63,10 +63,10 @@ def get_one_column_drift(
         elif target and column.name == target.column_name and column_type == ColumnType.Categorical:
             stattest = options.cat_target_stattest_func
 
-        if not stattest:
-            stattest = options.get_feature_stattest_func(column.name, column_type.value)
+    if not stattest:
+        stattest = options.get_feature_stattest_func(column.name, column_type.value)
 
-        threshold = options.get_threshold(column.name, column_type.value)
+    threshold = options.get_threshold(column.name, column_type.value)
     current_column = current_feature_data
     reference_column = reference_feature_data
 
@@ -144,12 +144,12 @@ def get_one_column_drift(
                         column.name: current_feature_data.values,
                         "Timestamp": None if datetime_data is None else datetime_data.values,
                     },
-                    index=index_data.values,
+                    index=index_data.values,  # type: ignore[arg-type]
                 ),
                 column.name,
                 datetime_name,
             )
-            current_scatter["current (mean)"] = df
+            current_scatter["current (mean)"] = df  # type: ignore[assignment]
             if prefix is None:
                 x_name = "Index binned"
             else:
@@ -172,9 +172,9 @@ def get_one_column_drift(
 
         for key in keys:
             if key not in reference_counts:
-                reference_counts.loc[key] = 0
+                reference_counts = pd.concat([reference_counts, pd.Series([0], [key])])
             if key not in current_counts:
-                current_counts.loc[key] = 0
+                current_counts = pd.concat([current_counts, pd.Series([0], [key])])
 
         reference_small_distribution = list(
             reversed(
@@ -246,7 +246,10 @@ def get_one_column_drift(
     return metrics
 
 
-class ColumnDriftMetric(ColumnMetric[ColumnDataDriftMetrics]):
+class ColumnDriftMetric(UsesRawDataMixin, ColumnMetric[ColumnDataDriftMetrics]):
+    class Config:
+        type_alias = "evidently:metric:ColumnDriftMetric"
+
     """Calculate drift metric for a column"""
 
     stattest: Optional[PossibleStatTestType]
@@ -259,7 +262,6 @@ class ColumnDriftMetric(ColumnMetric[ColumnDataDriftMetrics]):
         stattest_threshold: Optional[float] = None,
         options: AnyOptions = None,
     ):
-
         self.stattest = stattest
         self.stattest_threshold = stattest_threshold
         super().__init__(column_name=column_name, options=options)
@@ -279,10 +281,15 @@ class ColumnDriftMetric(ColumnMetric[ColumnDataDriftMetrics]):
             reference_feature_data = data.get_reference_column(self.column_name)
         except ColumnNotFound as ex:
             raise ValueError(f"Cannot find column '{ex.column_name}' in reference dataset")
-
+        if reference_feature_data is None:
+            raise ValueError(f"Cannot find column '{self.column_name.display_name}' in reference dataset")
         column_type = ColumnType.Numerical
         if self.column_name.is_main_dataset():
             column_type = data.data_definition.get_column(self.column_name.name).column_type
+        else:
+            if self.column_name.feature_class is not None:
+                column_type = self.column_name.feature_class.get_type(self.column_name.name)
+
         datetime_column = data.data_definition.get_datetime_column()
         options = DataDriftOptions(all_features_stattest=self.stattest, threshold=self.stattest_threshold)
         if self.get_options().render_options.raw_data:
@@ -293,7 +300,7 @@ class ColumnDriftMetric(ColumnMetric[ColumnDataDriftMetrics]):
             current_feature_data=current_feature_data,
             reference_feature_data=reference_feature_data,
             column=self.column_name,
-            index_data=data.current_data.index,
+            index_data=data.current_data.index.to_series(),
             column_type=column_type,
             datetime_data=data.current_data[datetime_column.column_name] if datetime_column else None,
             data_definition=data.data_definition,
@@ -332,9 +339,11 @@ class ColumnDriftMetricRenderer(MetricRenderer):
         # fig_json = fig.to_plotly_json()
         if result.scatter is not None:
             if obj.get_options().render_options.raw_data:
+                if not isinstance(result.scatter, ScatterField):
+                    raise ValueError("Result have incompatible type")
                 scatter_fig = plot_scatter_for_data_drift(
-                    curr_y=result.scatter.scatter[result.column_name],
-                    curr_x=result.scatter.scatter[result.scatter.x_name],
+                    curr_y=result.scatter.scatter[result.column_name].tolist(),
+                    curr_x=result.scatter.scatter[result.scatter.x_name].tolist(),
                     y0=result.scatter.plot_shape["y0"],
                     y1=result.scatter.plot_shape["y1"],
                     y_name=result.column_name,

@@ -13,6 +13,7 @@ from sklearn.pipeline import Pipeline
 from evidently.base_metric import InputData
 from evidently.base_metric import Metric
 from evidently.base_metric import MetricResult
+from evidently.core import IncludeTags
 from evidently.model.widget import BaseWidgetInfo
 from evidently.options.base import AnyOptions
 from evidently.renderers.base_renderer import MetricRenderer
@@ -25,11 +26,22 @@ from evidently.renderers.html_widgets import widget_tabs
 
 
 class TextDomainField(MetricResult):
+    class Config:
+        type_alias = "evidently:metric_result:TextDomainField"
+
     characteristic_examples: Optional[List[str]]
     characteristic_words: Optional[List[str]]
 
 
 class TextDomainClassifierDriftResult(MetricResult):
+    class Config:
+        type_alias = "evidently:metric_result:TextDomainClassifierDriftResult"
+        field_tags = {
+            "current": {IncludeTags.Current, IncludeTags.Extra},
+            "reference": {IncludeTags.Reference, IncludeTags.Extra},
+            "text_column_name": {IncludeTags.Parameter},
+        }
+
     text_column_name: str
     domain_classifier_roc_auc: float
     random_classifier_95_percentile: float
@@ -39,6 +51,9 @@ class TextDomainClassifierDriftResult(MetricResult):
 
 
 class TextDomainClassifierDriftMetric(Metric[TextDomainClassifierDriftResult]):
+    class Config:
+        type_alias = "evidently:metric:TextDomainClassifierDriftMetric"
+
     text_column_name: str
 
     def __init__(self, text_column_name: str, options: AnyOptions = None) -> None:
@@ -138,7 +153,11 @@ class TextDomainClassifierDriftMetric(Metric[TextDomainClassifierDriftResult]):
             shuffle=True,
         )
         # calculate domain classifier roc-auc score
-        (domain_classifier_roc_auc, y_pred_proba, classifier_pipeline,) = self.roc_auc_domain_classifier(
+        (
+            domain_classifier_roc_auc,
+            y_pred_proba,
+            classifier_pipeline,
+        ) = self.roc_auc_domain_classifier(
             X_train,
             X_test,
             y_train,

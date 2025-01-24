@@ -9,6 +9,7 @@ import pandas as pd
 from evidently.base_metric import InputData
 from evidently.base_metric import Metric
 from evidently.base_metric import MetricResult
+from evidently.core import IncludeTags
 from evidently.metrics.data_integrity.dataset_missing_values_metric import MissingValue
 from evidently.model.widget import BaseWidgetInfo
 from evidently.options.base import AnyOptions
@@ -25,6 +26,11 @@ from evidently.renderers.html_widgets import widget_tabs
 class ColumnMissingValues(MetricResult):
     """Statistics about missing values in a column"""
 
+    class Config:
+        type_alias = "evidently:metric_result:ColumnMissingValues"
+        pd_exclude_fields = {"different_missing_values"}
+        field_tags = {"number_of_rows": {IncludeTags.Extra}, "different_missing_values": {IncludeTags.Extra}}
+
     # count of rows in the column
     number_of_rows: int
     # set of different missed values in the column
@@ -38,12 +44,23 @@ class ColumnMissingValues(MetricResult):
 
 
 class ColumnMissingValuesMetricResult(MetricResult):
+    class Config:
+        type_alias = "evidently:metric_result:ColumnMissingValuesMetricResult"
+        field_tags = {
+            "current": {IncludeTags.Current},
+            "reference": {IncludeTags.Reference},
+            "column_name": {IncludeTags.Parameter},
+        }
+
     column_name: str
     current: ColumnMissingValues
     reference: Optional[ColumnMissingValues] = None
 
 
 class ColumnMissingValuesMetric(Metric[ColumnMissingValuesMetricResult]):
+    class Config:
+        type_alias = "evidently:metric:ColumnMissingValuesMetric"
+
     """Count missing values in a column.
 
     Missing value is a null or NaN value.
@@ -80,7 +97,7 @@ class ColumnMissingValuesMetric(Metric[ColumnMissingValuesMetricResult]):
             _missing_values = missing_values
 
         # use frozenset because metrics parameters should be immutable/hashable for deduplication
-        self.missing_values = frozenset(_missing_values)
+        self.missing_values = frozenset(sorted(_missing_values, key=str))
         super().__init__(options=options)
 
     def _calculate_missing_values_stats(self, column: pd.Series) -> ColumnMissingValues:

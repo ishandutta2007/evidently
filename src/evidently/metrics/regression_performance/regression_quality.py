@@ -1,6 +1,7 @@
 from typing import Dict
 from typing import List
 from typing import Optional
+from typing import Set
 
 import numpy as np
 from sklearn.metrics import mean_absolute_error
@@ -12,6 +13,7 @@ from evidently.base_metric import InputData
 from evidently.base_metric import Metric
 from evidently.base_metric import MetricResult
 from evidently.calculations.regression_performance import calculate_regression_performance
+from evidently.core import IncludeTags
 from evidently.metric_results import DatasetColumns
 from evidently.metric_results import Histogram
 from evidently.metrics.regression_performance.objects import RegressionMetricScatter
@@ -31,6 +33,10 @@ from evidently.utils.visualizations import make_hist_for_num_plot
 
 
 class MoreRegressionMetrics(RegressionMetrics):
+    class Config:
+        type_alias = "evidently:metric_result:MoreRegressionMetrics"
+        field_tags: Dict[str, Set[IncludeTags]] = {"underperformance": set()}
+
     error_std: float
     abs_error_std: float
     abs_perc_error_std: float
@@ -38,8 +44,21 @@ class MoreRegressionMetrics(RegressionMetrics):
 
 class RegressionQualityMetricResults(MetricResult):
     class Config:
+        type_alias = "evidently:metric_result:RegressionQualityMetricResults"
         dict_exclude_fields = {"hist_for_plot", "vals_for_plots", "me_hist_for_plot"}
-        pd_exclude_fields = {"hist_for_plot", "vals_for_plots", "me_hist_for_plot"}
+        pd_exclude_fields = {"hist_for_plot", "vals_for_plots", "me_hist_for_plot", "error_normality", "error_bias"}
+        field_tags = {
+            "current": {IncludeTags.Current},
+            "reference": {IncludeTags.Reference},
+            "rmse_default": {IncludeTags.Extra},
+            "me_default_sigma": {IncludeTags.Extra},
+            "mean_abs_error_default": {IncludeTags.Extra},
+            "mean_abs_perc_error_default": {IncludeTags.Extra},
+            "abs_error_max_default": {IncludeTags.Extra},
+            "error_normality": {IncludeTags.Extra},
+            "vals_for_plots": {IncludeTags.Render},
+            "error_bias": {IncludeTags.Extra},
+        }
 
     columns: DatasetColumns
     current: MoreRegressionMetrics
@@ -57,6 +76,9 @@ class RegressionQualityMetricResults(MetricResult):
 
 
 class RegressionQualityMetric(Metric[RegressionQualityMetricResults]):
+    class Config:
+        type_alias = "evidently:metric:RegressionQualityMetric"
+
     def calculate(self, data: InputData) -> RegressionQualityMetricResults:
         dataset_columns = process_columns(data.current_data, data.column_mapping)
         target_name = dataset_columns.utility_columns.target
@@ -123,8 +145,9 @@ class RegressionQualityMetric(Metric[RegressionQualityMetricResults]):
         # mape default values
         # optimal constant for mape
         s = data.current_data[target_name]
-        inv_y = 1 / s[s != 0].values
-        w = inv_y / sum(inv_y)
+        # TODO: fix typing
+        inv_y = 1 / s[s != 0].values  # type: ignore[operator]
+        w = inv_y / sum(inv_y)  # type: ignore[operator,arg-type]
         idxs = np.argsort(w)
         sorted_w = w[idxs]
         sorted_w_cumsum = np.cumsum(sorted_w)
@@ -197,7 +220,7 @@ class RegressionQualityMetric(Metric[RegressionQualityMetricResults]):
         err_curr = data.current_data[prediction_name] - data.current_data[target_name]
         err_ref = None
 
-        if is_ref_data:
+        if data.reference_data is not None:
             err_ref = data.reference_data[prediction_name] - data.reference_data[target_name]
         me_hist_for_plot = make_hist_for_num_plot(err_curr, err_ref)
 

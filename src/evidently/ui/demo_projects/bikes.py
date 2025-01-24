@@ -1,13 +1,14 @@
 import io
+import os
 import zipfile
 from datetime import datetime
 from datetime import time
 from datetime import timedelta
+from itertools import cycle
 
 import pandas as pd
 import requests
 from dateutil.relativedelta import relativedelta
-from numpy import random
 from sklearn import ensemble
 
 from evidently import ColumnMapping
@@ -23,11 +24,18 @@ from evidently.ui.dashboards import PanelValue
 from evidently.ui.dashboards import PlotType
 from evidently.ui.dashboards import ReportFilter
 from evidently.ui.demo_projects import DemoProject
-from evidently.ui.workspace import WorkspaceBase
+from evidently.ui.workspace.base import WorkspaceBase
 
 
 def create_data():
-    content = requests.get("https://archive.ics.uci.edu/static/public/275/bike+sharing+dataset.zip").content
+    if os.path.exists("Bike-Sharing-Dataset.zip"):
+        with open("Bike-Sharing-Dataset.zip", "rb") as f:
+            content = f.read()
+    else:
+        content = requests.get(
+            "https://archive.ics.uci.edu/static/public/275/bike+sharing+dataset.zip",
+            verify=False,
+        ).content
     with zipfile.ZipFile(io.BytesIO(content)) as arc:
         raw_data = pd.read_csv(
             arc.open("hour.csv"),
@@ -66,16 +74,38 @@ def create_data():
     return current, reference, column_mapping
 
 
-TAGS = [
-    "production_critical",
-    "city_bikes_hourly",
-    "tabular_data",
-    "regression_batch_model",
-    "high_seasonality",
-    "numerical_features",
-    "categorical_features",
-    "no_missing_values",
-]
+def snapshot_tags_generator():
+    tags = [
+        "production_critical",
+        "city_bikes_hourly",
+        "tabular_data",
+        "regression_batch_model",
+        "high_seasonality",
+        "numerical_features",
+        "categorical_features",
+        "no_missing_values",
+    ]
+
+    yield from cycle(
+        [
+            [tags[0], tags[1], tags[2]],
+            [tags[1]],
+            [],
+            [tags[2]],
+            [tags[3], tags[4]],
+            [],
+            [tags[4], tags[5], tags[6], tags[7]],
+            [],
+            [],
+        ]
+    )
+
+
+SNAPSHOT_TAGS = snapshot_tags_generator()
+
+
+def next_snapshot_tags():
+    return next(SNAPSHOT_TAGS)
 
 
 def create_report(i: int, data):
@@ -96,9 +126,7 @@ def create_report(i: int, data):
             metrics.ColumnSummaryMetric(column_name="prediction"),
         ],
         timestamp=datetime(2023, 1, 29) + timedelta(days=i + 1),
-        tags=list(random.choice(TAGS, random.randint(1, len(TAGS) + 1), replace=False))
-        if random.uniform(0, 1) < 0.3
-        else [],
+        tags=next_snapshot_tags(),
     )
     data_drift_report.set_batch_size("daily")
 
@@ -111,14 +139,12 @@ def create_report(i: int, data):
 
 
 def create_test_suite(i: int, data):
-
     current, reference, column_mapping = data
+
     data_drift_test_suite = TestSuite(
         tests=[DataDriftTestPreset()],
         timestamp=datetime(2023, 1, 29) + timedelta(days=i + 1),
-        tags=list(random.choice(TAGS, random.randint(1, len(TAGS) + 1), replace=False))
-        if random.uniform(0, 1) < 0.3
-        else [],
+        tags=next_snapshot_tags(),
     )
 
     data_drift_test_suite.run(
@@ -260,6 +286,7 @@ def create_project(workspace: WorkspaceBase, name: str):
 bikes_demo_project = DemoProject(
     name="Demo project - Bikes",
     create_data=create_data,
+    create_snapshot=None,
     create_report=create_report,
     create_project=create_project,
     create_test_suite=create_test_suite,

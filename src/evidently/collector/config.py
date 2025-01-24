@@ -1,6 +1,7 @@
 import abc
 import json
 import time
+import warnings
 from typing import Any
 from typing import Dict
 from typing import List
@@ -10,17 +11,21 @@ from typing import Union
 import pandas as pd
 
 from evidently._pydantic_compat import BaseModel
+from evidently._pydantic_compat import Field
 from evidently._pydantic_compat import parse_obj_as
 from evidently.base_metric import Metric
 from evidently.collector.storage import CollectorStorage
 from evidently.collector.storage import InMemoryStorage
 from evidently.options.base import Options
 from evidently.pydantic_utils import PolymorphicModel
+from evidently.pydantic_utils import autoregister
 from evidently.report import Report
 from evidently.suite.base_suite import MetadataValueType
 from evidently.test_suite import TestSuite
 from evidently.tests.base_test import Test
 from evidently.ui.remote import RemoteWorkspace
+from evidently.ui.workspace import CloudWorkspace
+from evidently.ui.workspace.view import WorkspaceView
 from evidently.utils import NumpyEncoder
 
 CONFIG_PATH = "collector_config.json"
@@ -38,21 +43,52 @@ class Config(BaseModel):
 
 
 class CollectorTrigger(PolymorphicModel):
+    class Config:
+        is_base_type = True
+
     @abc.abstractmethod
     def is_ready(self, config: "CollectorConfig", storage: "CollectorStorage") -> bool:
         raise NotImplementedError
 
 
+@autoregister
 class IntervalTrigger(CollectorTrigger):
-    interval: float
+    class Config:
+        type_alias = "evidently:collector_trigger:IntervalTrigger"
+
+    interval: float = Field(gt=0)
     last_triggered: float = 0
 
     def is_ready(self, config: "CollectorConfig", storage: "CollectorStorage") -> bool:
         now = time.time()
-        if now - self.last_triggered > self.interval:
+        is_ready = (now - self.last_triggered) > self.interval
+        if is_ready:
             self.last_triggered = now
-            return True
-        return False
+        return is_ready
+
+
+@autoregister
+class RowsCountTrigger(CollectorTrigger):
+    class Config:
+        type_alias = "evidently:collector_trigger:RowsCountTrigger"
+
+    rows_count: int = Field(default=1, gt=0)
+
+    def is_ready(self, config: "CollectorConfig", storage: "CollectorStorage") -> bool:
+        buffer_size = storage.get_buffer_size(config.id)
+        return buffer_size > 0 and buffer_size >= self.rows_count
+
+
+@autoregister
+class RowsCountOrIntervalTrigger(CollectorTrigger):
+    class Config:
+        type_alias = "evidently:collector_trigger:RowsCountOrIntervalTrigger"
+
+    rows_count_trigger: RowsCountTrigger
+    interval_trigger: IntervalTrigger
+
+    def is_ready(self, config: "CollectorConfig", storage: "CollectorStorage") -> bool:
+        return self.interval_trigger.is_ready(config, storage) or self.rows_count_trigger.is_ready(config, storage)
 
 
 class ReportConfig(Config):
@@ -111,14 +147,27 @@ class CollectorConfig(Config):
     api_url: str = "http://localhost:8000"
     api_secret: Optional[str] = None
     cache_reference: bool = True
+    is_cloud: Optional[bool] = None  # None means autodetect
+    save_datasets: bool = False
 
     _reference: Any = None
-    _workspace: Optional[RemoteWorkspace] = None
+    _workspace: Optional[WorkspaceView] = None
 
     @property
-    def workspace(self) -> RemoteWorkspace:
+    def is_cloud_resolved(self) -> bool:
+        return self.is_cloud if self.is_cloud is not None else self.api_url == "https://app.evidently.cloud"
+
+    @property
+    def workspace(self) -> WorkspaceView:
         if self._workspace is None:
-            self._workspace = RemoteWorkspace(base_url=self.api_url, secret=self.api_secret)
+            if self.is_cloud_resolved:
+                if self.api_secret is None:
+                    raise ValueError("Please provide token and org_id for CloudWorkspace")
+                self._workspace = CloudWorkspace(token=self.api_secret, url=self.api_url)
+            else:
+                if self.save_datasets:
+                    warnings.warn("'save_datasets' is not supported for self-hosted Evidently UI")
+                self._workspace = RemoteWorkspace(base_url=self.api_url, secret=self.api_secret)
         return self._workspace
 
     def _read_reference(self):
@@ -140,6 +189,7 @@ class CollectorServiceConfig(Config):
     check_interval: float = 1
     collectors: Dict[str, CollectorConfig] = {}
     storage: CollectorStorage = InMemoryStorage()
+    autosave: bool = True
 
     @classmethod
     def load_or_default(cls, path: str):

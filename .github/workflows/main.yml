@@ -6,9 +6,14 @@ name: CI
 on:
   # Triggers the workflow on push or pull request events but only for the main branch
   push:
-    branches: [ main ]
+    branches: [main]
   pull_request:
-    branches: [ main ]
+    branches: [main]
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - ready_for_review
 
   # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
@@ -19,138 +24,163 @@ concurrency:
 
 # A workflow run is made up of one or more jobs that can run sequentially or in parallel
 jobs:
-  # This workflow contains a single job called "build"
+  changed_files:
+    runs-on: ubuntu-22.04 # windows-latest || macos-latest
+    name: 👀 List Changed Evidently Files
+    outputs:
+      evidently_any_modified: ${{ steps.changed-files.outputs.evidently_python_any_modified == 'true' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Get all python files that have changed
+        id: changed-files
+        uses: tj-actions/changed-files@v42
+        with:
+          files_yaml: |
+            evidently_python:
+              - .github/**
+              - src/evidently/**
+              - '!src/evidently/ui/assets/**'
+              - '!src/evidently/nbextension/**'
+              - example_test.py
+              - examples/**/*.ipynb
+              - requirements.dev.txt
+              - requirements.min.txt
+              - setup.py
+              - setup.cfg
+              - setupbase.py
+              - pylintrc
+              - tests/**
+
+      - name: Run step if evidently_python file(s) change
+        if: steps.changed-files.outputs.evidently_python_any_modified == 'true'
+        run: |
+          echo "One or more evidently_python file(s) has changed."
+          echo "List all the files that have changed: ${{ steps.changed-files.outputs.evidently_python_all_changed_and_modified_files }}"
+
   linter:
     # The type of runner that the job will run on
-    runs-on: ubuntu-20.04
-    if: github.event.pull_request.draft == false
-
+    runs-on: ubuntu-22.04
+    needs: changed_files
+    if: ${{ github.event.pull_request.draft == false && needs.changed_files.outputs.evidently_any_modified == 'true' }}
     # Steps represent a sequence of tasks that will be executed as part of the job
     steps:
       # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
-      - uses: actions/checkout@v3
-      - uses: actions/setup-python@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
-          python-version: '3.7'
-          architecture: 'x64'
-          cache: 'pip'
+          python-version: "3.9"
+          architecture: "x64"
+          cache: "pip"
+          cache-dependency-path: requirements.min.txt
       # Runs a single command using the runners shell
       - name: Install dependencies
         run: pip install -r requirements.min.txt && pip install -r requirements.dev.txt
-      # run black separately for source and tests folders (prevent generated examples folder checking)
-      # temporary specify line length and python version explicitly for black
-      # it cannot find the settings in setup.cfg
-      - name: Run Black
-        run: black --check --diff -l 120 -t py37 src
-      - name: Run Black for Tests
-        run: black --check --diff -l 120 -t py37 tests
-      # run isort separately for source and tests folders (prevent generated examples folder checking)
-      - name: Run iSort
-        run: isort --check src
-      - name: Run iSort for Tests
-        run: isort --check tests
-      # run flake8 separately for source and tests folders
-      - name: Run Flake8
-        run: flake8 src
-      - name: Run Flake8 for Tests
-        run: flake8 tests
+      - name: Run pre-commit
+        run: pre-commit run --all
       - name: Run Mypy
         run: mypy
+
+  prepare-cache-data:
+    name: Prepare cache data
+    runs-on: ubuntu-22.04
+    needs: changed_files
+    if: ${{ github.event.pull_request.draft == false && needs.changed_files.outputs.evidently_any_modified == 'true' }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: 🔍 Get bikes dataset cached
+        uses: ./.github/share-actions/get-bikes-dataset-cached
+
   test-minimal:
     name: Test on minimal requirements
-    runs-on: ubuntu-latest
-    if: github.event.pull_request.draft == false
+    runs-on: ubuntu-22.04
+    needs:
+      - changed_files
+      - prepare-cache-data
+    if: ${{ github.event.pull_request.draft == false && needs.changed_files.outputs.evidently_any_modified == 'true' }}
+    env:
+      EVIDENTLY_TEST_ENVIRONMENT: 1
     steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-python@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
-          python-version: "3.7"
-          architecture: 'x64'
-          cache: 'pip'
-      - name: Install package
-        run: pip install -e .[dev,spark]
+          python-version: "3.8"
+          architecture: "x64"
+          cache: "pip"
+          cache-dependency-path: requirements.min.txt
+
+      - name: 🔍 Get bikes dataset cached
+        uses: ./.github/share-actions/get-bikes-dataset-cached
+
+      - name: Update pip
+        run: python -m pip install --upgrade pip
       - name: Install minimal dependencies
         run: pip install -r requirements.min.txt
+      - name: Install package
+        run: pip install -e .[dev,spark,fsspec,llm]
       - name: Run Tests
         run: python -m pytest --durations=50
   test:
     # The type of runner that the job will run on
     name: Test ${{ matrix.os }} with py${{ matrix.python }}
-    needs: linter
+    env:
+      EVIDENTLY_TEST_ENVIRONMENT: 1
+    needs:
+      - linter
+      - prepare-cache-data
     runs-on: ${{ matrix.os }}
     if: github.event.pull_request.draft == false
     strategy:
       matrix:
-        os: [ ubuntu-latest, windows-latest, macos-latest ]
-        python: [ "3.7", "3.8", "3.9", "3.10", "3.11" ]
+        os: [ubuntu-22.04, windows-2022, macos-14]
+        python: ["3.8", "3.9", "3.10", "3.11", "3.12"]
         exclude:
-          - os: macos-latest
-            python: "3.7"
+          - os: windows-latest
+            python: "3.12"
       fail-fast: false
     steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-python@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
-          architecture: 'x64'
-          cache: 'pip'
+          cache: "pip"
+          cache-dependency-path: setup.py
+      - uses: actions/cache@v4
+        id: cache-scipy-data
+        with:
+          path: ~/scikit_learn_data
+          key: cache-scipy-data
+          enableCrossOsArchive: true
+
+      - name: 🔍 Get bikes dataset cached
+        uses: ./.github/share-actions/get-bikes-dataset-cached
+
       - name: Install package
-        run: pip install -e .[dev,spark]
+        run: pip install -e .[dev,spark,fsspec,llm]
       - name: Run Tests
         run: python -m pytest --durations=50
 
-  test-examples:
-    name: Test examples on ${{ matrix.os }} with py${{ matrix.python }}, min ${{ matrix.minimal }}
-    needs: test
-    runs-on: ${{ matrix.os }}
-    if: github.event.pull_request.draft == false
-    strategy:
-      matrix:
-        os: [ ubuntu-latest ]
-        python: [ "3.7"]
-        minimal: [ false ]
-      fail-fast: false
-    steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-python@v4
-        with:
-          python-version: ${{ matrix.python }}
-          architecture: 'x64'
-          cache: 'pip'
-      - name: Install package
-        run: pip install -e .[dev]
-      - name: Install minimal reqs
-        if: matrix.minimal
-        run: pip install -r requirements.min.txt
-      - name: Prepare examples dependencies
-        run: pip install catboost sentence-transformers
-      - name: Export examples
-        run: jupyter nbconvert --to python examples/*/*.ipynb --output-dir example_scripts
-      - name: Download test data
-        run: curl https://archive.ics.uci.edu/static/public/275/bike+sharing+dataset.zip -o Bike-Sharing-Dataset.zip &&
-          unzip Bike-Sharing-Dataset.zip -d Bike-Sharing-Dataset
-      - name: Run examples
-        run: python example_test.py
-
   build:
     # The type of runner that the job will run on
-    runs-on: ubuntu-20.04
-    if: github.event.pull_request.draft == false
+    runs-on: ubuntu-22.04
+    needs: changed_files
+    if: ${{ github.event.pull_request.draft == false && needs.changed_files.outputs.evidently_any_modified == 'true' }}
     steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-python@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
-          python-version: '3.7'
-          architecture: 'x64'
-          cache: 'pip'
+          python-version: "3.8"
+          architecture: "x64"
+          cache: "pip"
+          cache-dependency-path: setup.py
       - name: Install dependencies
-        run: pip install -r requirements.min.txt
+        run: pip install -e .
       - name: Install wheel
         run: pip install wheel
       - name: Build package
         run: python setup.py sdist bdist_wheel
       - name: Archive built package
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: build-artifacts
           path: dist/

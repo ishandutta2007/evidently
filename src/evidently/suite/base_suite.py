@@ -3,10 +3,11 @@ import copy
 import dataclasses
 import json
 import logging
-import uuid
 from datetime import datetime
+from typing import IO
+from typing import Any
 from typing import Dict
-from typing import Iterator
+from typing import Generator
 from typing import List
 from typing import Optional
 from typing import Tuple
@@ -14,8 +15,10 @@ from typing import Type
 from typing import TypeVar
 from typing import Union
 
+import ujson
+
 import evidently
-from evidently._pydantic_compat import UUID4
+from evidently import ColumnMapping
 from evidently._pydantic_compat import BaseModel
 from evidently._pydantic_compat import parse_obj_as
 from evidently.base_metric import ErrorResult
@@ -23,25 +26,37 @@ from evidently.base_metric import GenericInputData
 from evidently.base_metric import Metric
 from evidently.base_metric import MetricResult
 from evidently.calculation_engine.engine import Engine
+from evidently.calculation_engine.engine import EngineDatasets
 from evidently.core import IncludeOptions
+from evidently.features.generated_features import FeatureResult
+from evidently.features.generated_features import GeneratedFeatures
 from evidently.options.base import AnyOptions
 from evidently.options.base import Options
 from evidently.renderers.base_renderer import DEFAULT_RENDERERS
 from evidently.renderers.base_renderer import MetricRenderer
 from evidently.renderers.base_renderer import RenderersDefinitions
 from evidently.renderers.base_renderer import TestRenderer
-from evidently.renderers.notebook_utils import determine_template
-from evidently.tests.base_test import GroupingTypes
 from evidently.tests.base_test import Test
 from evidently.tests.base_test import TestParameters
 from evidently.tests.base_test import TestResult
 from evidently.tests.base_test import TestStatus
+from evidently.ui.datasets import inject_feature_types_in_column_mapping
+from evidently.ui.type_aliases import ComputationConfigID
+from evidently.ui.type_aliases import DatasetID
+from evidently.ui.type_aliases import SnapshotID
 from evidently.utils import NumpyEncoder
+from evidently.utils import data_preprocessing
 from evidently.utils.dashboard import SaveMode
 from evidently.utils.dashboard import SaveModeMap
 from evidently.utils.dashboard import TemplateParams
+from evidently.utils.dashboard import file_html_template
+from evidently.utils.dashboard import inline_iframe_html_template
 from evidently.utils.dashboard import save_data_file
 from evidently.utils.dashboard import save_lib_files
+from evidently.utils.data_preprocessing import DataDefinition
+from evidently.utils.data_preprocessing import FeatureDefinition
+
+USE_UJSON = False
 
 
 @dataclasses.dataclass
@@ -75,13 +90,17 @@ def find_metric_renderer(obj, renderers: RenderersDefinitions) -> MetricRenderer
     raise KeyError(f"No renderer found for {obj}")
 
 
-def _discover_dependencies(test: Union[Metric, Test]) -> Iterator[Tuple[str, Union[Metric, Test]]]:
+def _discover_dependencies(test: Union[Metric, Test]) -> Generator[Tuple[str, Union[Metric, Test]], None, None]:
     if hasattr(test, "__evidently_dependencies__"):
         yield from test.__evidently_dependencies__()  # type: ignore[union-attr]
         return
     for field_name, field in test.__dict__.items():
         if issubclass(type(field), (Metric, Test)):
             yield field_name, field
+
+
+class RunMetadata(BaseModel):
+    descriptors: Dict[str, FeatureDefinition] = {}
 
 
 @dataclasses.dataclass
@@ -95,7 +114,52 @@ class Context:
     test_results: Dict[Test, TestResult]
     state: State
     renderers: RenderersDefinitions
+    data: Optional[GenericInputData] = None
+    features: Optional[Dict[GeneratedFeatures, FeatureResult]] = None
     options: Options = Options()
+    data_definition: Optional["DataDefinition"] = None
+    run_metadata: RunMetadata = dataclasses.field(default_factory=RunMetadata)
+
+    def get_data_definition(
+        self,
+        current_data,
+        reference_data,
+        column_mapping: ColumnMapping,
+        categorical_features_cardinality: Optional[int] = None,
+    ) -> DataDefinition:
+        if self.data_definition is None:
+            if self.engine is None:
+                raise ValueError("Cannot create data definition when engine is not set")
+            self.data_definition = self.engine.get_data_definition(
+                current_data,
+                reference_data,
+                column_mapping,
+                categorical_features_cardinality,
+            )
+        return self.data_definition
+
+    def get_datasets(self) -> EngineDatasets:
+        if self.engine is None:
+            raise ValueError("Cannot get datasets when engine is not set")
+        if self.data_definition is None:
+            raise ValueError("Cannot get datasets when suite is not executed")
+
+        return self.engine.form_datasets(
+            self.data, list(self.features.keys()) if self.features is not None else [], self.data_definition
+        )
+
+    def set_features(self, features: Optional[Dict[GeneratedFeatures, FeatureResult]]):
+        if features is None:
+            return
+        self.features = features
+        for feature in features.keys():
+            for feature_column in feature.list_columns():
+                self.run_metadata.descriptors[feature_column.name] = FeatureDefinition(
+                    feature_name=feature_column.name,
+                    display_name=feature_column.display_name,
+                    feature_type=feature.get_type(feature_column.name),
+                    feature_class=feature.__class__.__name__,
+                )
 
 
 class ContextPayload(BaseModel):
@@ -104,6 +168,8 @@ class ContextPayload(BaseModel):
     tests: List[Test]
     test_results: List[TestResult]
     options: Options = Options()
+    data_definition: Optional[DataDefinition]
+    run_metadata: RunMetadata = RunMetadata()
 
     @classmethod
     def from_context(cls, context: Context):
@@ -113,6 +179,8 @@ class ContextPayload(BaseModel):
             tests=list(context.test_results.keys()),
             test_results=list(context.test_results.values()),
             options=context.options,
+            data_definition=context.data_definition,
+            run_metadata=context.run_metadata,
         )
 
     def to_context(self) -> Context:
@@ -125,6 +193,8 @@ class ContextPayload(BaseModel):
             state=States.Calculated,
             renderers=DEFAULT_RENDERERS,
             options=self.options,
+            data_definition=self.data_definition,
+            run_metadata=self.run_metadata,
         )
         for m in ctx.metrics:
             m.set_context(ctx)
@@ -153,9 +223,16 @@ class Display:
             dashboard_info=dashboard_info,
             additional_graphs=graphs,
         )
-        return self._render(determine_template("auto"), template_params)
+        return self._render(inline_iframe_html_template, template_params)
 
     def show(self, mode="auto"):
+        """
+        Keyword arguments:
+        `mode` - Deprecated.
+
+        Now you should call
+        this function without any args, like: `.show()`
+        """
         dashboard_id, dashboard_info, graphs = self._build_dashboard_info()
         template_params = TemplateParams(
             dashboard_id=dashboard_id,
@@ -166,7 +243,7 @@ class Display:
         try:
             from IPython.display import HTML
 
-            return HTML(self._render(determine_template(mode), template_params))
+            return HTML(self._render(inline_iframe_html_template, template_params))
         except ImportError as err:
             raise Exception("Cannot import HTML from IPython.display, no way to show html") from err
 
@@ -177,9 +254,13 @@ class Display:
             dashboard_info=dashboard_info,
             additional_graphs=graphs,
         )
-        return self._render(determine_template("inline"), template_params)
+        return self._render(file_html_template, template_params)
 
-    def save_html(self, filename: str, mode: Union[str, SaveMode] = SaveMode.SINGLE_FILE):
+    def save_html(
+        self,
+        filename: Union[str, IO],
+        mode: Union[str, SaveMode] = SaveMode.SINGLE_FILE,
+    ):
         dashboard_id, dashboard_info, graphs = self._build_dashboard_info()
         if isinstance(mode, str):
             _mode = SaveModeMap.get(mode)
@@ -192,9 +273,15 @@ class Display:
                 dashboard_info=dashboard_info,
                 additional_graphs=graphs,
             )
-            with open(filename, "w", encoding="utf-8") as out_file:
-                out_file.write(self._render(determine_template("inline"), template_params))
+            render = self._render(file_html_template, template_params)
+            if isinstance(filename, str):
+                with open(filename, "w", encoding="utf-8") as out_file:
+                    out_file.write(render)
+            else:
+                filename.write(render)
         else:
+            if not isinstance(filename, str):
+                raise ValueError("Only singlefile save mode supports streams")
             font_file, lib_file = save_lib_files(filename, mode)
             data_file = save_data_file(filename, mode, dashboard_id, dashboard_info, graphs)
             template_params = TemplateParams(
@@ -208,7 +295,7 @@ class Display:
                 include_js_files=[lib_file, data_file],
             )
             with open(filename, "w", encoding="utf-8") as out_file:
-                out_file.write(self._render(determine_template("inline"), template_params))
+                out_file.write(self._render(file_html_template, template_params))
 
     @abc.abstractmethod
     def as_dict(
@@ -229,7 +316,14 @@ class Display:
     ) -> dict:
         """Return all data for json representation"""
         result = {"version": evidently.__version__}
-        result.update(self.as_dict(include_render=include_render, include=include, exclude=exclude, **kwargs))
+        result.update(
+            self.as_dict(
+                include_render=include_render,
+                include=include,
+                exclude=exclude,
+                **kwargs,
+            )
+        )
         return result
 
     def json(
@@ -240,7 +334,12 @@ class Display:
         **kwargs,
     ) -> str:
         return json.dumps(
-            self._get_json_content(include_render=include_render, include=include, exclude=exclude, **kwargs),
+            self._get_json_content(
+                include_render=include_render,
+                include=include,
+                exclude=exclude,
+                **kwargs,
+            ),
             cls=NumpyEncoder,
             allow_nan=True,
         )
@@ -348,12 +447,6 @@ class Suite:
                     parameters=TestParameters(),
                     exception=ex,
                 )
-            test_results[test].groups.update(
-                {
-                    GroupingTypes.TestGroup.id: test.group,
-                    GroupingTypes.TestType.id: test.name,
-                }
-            )
 
         self.context.test_results = test_results
         self.context.state = States.Tested
@@ -382,8 +475,36 @@ class Suite:
 MetadataValueType = Union[str, Dict[str, str], List[str]]
 
 
+class DatasetLinks(BaseModel):
+    reference: Optional[DatasetID] = None
+    current: Optional[DatasetID] = None
+    additional: Dict[str, DatasetID] = {}
+
+    def __iter__(self) -> Generator[Tuple[str, DatasetID], None, None]:
+        if self.reference is not None:
+            yield "reference", self.reference
+        if self.current is not None:
+            yield "current", self.current
+        yield from self.additional.items()
+
+
+class DatasetInputOutputLinks(BaseModel):
+    input: DatasetLinks = DatasetLinks()
+    output: DatasetLinks = DatasetLinks()
+
+    def __iter__(self) -> Generator[Tuple[str, Tuple[str, DatasetID]], None, None]:
+        yield from (("input", (subtype, dataset_id)) for subtype, dataset_id in self.input)
+        yield from (("output", (subtype, dataset_id)) for subtype, dataset_id in self.output)
+
+
+class SnapshotLinks(BaseModel):
+    datasets: DatasetInputOutputLinks = DatasetInputOutputLinks()
+    computation_config_id: Optional[ComputationConfigID] = None
+    task_id: Optional[str] = None
+
+
 class Snapshot(BaseModel):
-    id: UUID4
+    id: SnapshotID
     name: Optional[str] = None
     timestamp: datetime
     metadata: Dict[str, MetadataValueType]
@@ -392,10 +513,14 @@ class Snapshot(BaseModel):
     metrics_ids: List[int] = []
     test_ids: List[int] = []
     options: Options
+    links: SnapshotLinks = SnapshotLinks()
 
     def save(self, filename):
         with open(filename, "w") as f:
-            json.dump(self.dict(), f, indent=2, cls=NumpyEncoder)
+            if USE_UJSON:
+                ujson.dump(self.dict(), f, indent=2, default=NumpyEncoder().default)
+            else:
+                json.dump(self.dict(), f, indent=2, cls=NumpyEncoder)
 
     @classmethod
     def load(cls, filename):
@@ -405,6 +530,10 @@ class Snapshot(BaseModel):
     @property
     def is_report(self):
         return len(self.metrics_ids) > 0
+
+    @property
+    def is_new_report(self):
+        return self.metadata.get("version", "1").startswith("2")
 
     def as_report(self):
         from evidently.report import Report
@@ -426,20 +555,34 @@ class Snapshot(BaseModel):
 T = TypeVar("T", bound="ReportBase")
 
 
-class ReportBase(Display):
+class Runnable(abc.ABC):
+    @abc.abstractmethod
+    def run(
+        self,
+        *,
+        reference_data,
+        current_data,
+        column_mapping: Optional[ColumnMapping] = None,
+        engine: Optional[Type[Engine]] = None,
+        additional_data: Dict[str, Any] = None,
+        timestamp: Optional[datetime] = None,
+    ) -> None:
+        raise NotImplementedError
+
+
+class ReportBase(Display, Runnable):
     _inner_suite: Suite
     # collection of all possible common options
     options: Options
-    id: uuid.UUID
+    id: SnapshotID
     name: Optional[str] = None
     timestamp: datetime
     metadata: Dict[str, MetadataValueType] = {}
     tags: List[str] = []
 
-    def __init__(self, options: AnyOptions = None, timestamp: Optional[datetime] = None, name: str = None):
+    def __init__(self, options: AnyOptions = None, name: str = None):
         self.name = name
         self.options = Options.from_any_options(options)
-        self.timestamp = timestamp or datetime.now()
 
     def _get_json_content(
         self,
@@ -470,7 +613,7 @@ class ReportBase(Display):
     def _parse_snapshot(cls: Type[T], payload: Snapshot) -> T:
         raise NotImplementedError
 
-    def save(self, filename):
+    def save(self, filename) -> None:
         """Save state to file (experimental)"""
         self._get_snapshot().save(filename)
 
@@ -480,4 +623,26 @@ class ReportBase(Display):
         return cls._parse_snapshot(Snapshot.load(filename))
 
     def to_snapshot(self):
+        try:
+            self._inner_suite.raise_for_error()
+        except Exception as e:
+            raise ValueError("Cannot create snapshot because of calculation error") from e
         return self._get_snapshot()
+
+    def datasets(self) -> EngineDatasets[Any]:
+        return self._inner_suite.context.get_datasets()
+
+    def get_column_mapping(self) -> ColumnMapping:
+        if (
+            self._inner_suite.context.state not in [States.Calculated, States.Tested]
+            or not self._inner_suite.context.data_definition
+        ):
+            raise ValueError("Cannot get column mapping because report did not run")
+        data_definition = self._inner_suite.context.data_definition
+        column_mapping = data_preprocessing.create_column_mapping(data_definition)
+        features_metadata = self._inner_suite.context.run_metadata.descriptors
+        column_mapping_with_descriptor = inject_feature_types_in_column_mapping(column_mapping, features_metadata)
+        return column_mapping_with_descriptor
+
+    def has_descriptors(self) -> bool:
+        return bool(self._inner_suite.context.run_metadata.descriptors)

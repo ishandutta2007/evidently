@@ -13,6 +13,9 @@ from evidently.renderers.base_renderer import default_renderer
 
 
 class FBetaTopKMetric(TopKMetric):
+    class Config:
+        type_alias = "evidently:metric:FBetaTopKMetric"
+
     k: int
     beta: Optional[float]
     min_rel_score: Optional[int]
@@ -47,11 +50,11 @@ class FBetaTopKMetric(TopKMetric):
             pr_key = "precision"
             rc_key = "recall"
         result = self._precision_recall_calculation.get_result()
-        current = pd.Series(index=result.current["k"], data=self.fbeta(result.current[pr_key], result.current[rc_key]))
+        current = pd.Series(data=self.fbeta(result.current[pr_key], result.current[rc_key]))
         ref_data = result.reference
         reference: Optional[pd.Series] = None
         if ref_data is not None:
-            reference = pd.Series(index=ref_data["k"], data=self.fbeta(ref_data[pr_key], ref_data[rc_key]))
+            reference = pd.Series(data=self.fbeta(ref_data[pr_key], ref_data[rc_key]))
         return TopKMetricResult(k=self.k, reference=reference, current=current)
 
     def fbeta(self, precision, recall):
@@ -67,4 +70,4 @@ class FBetaTopKMetric(TopKMetric):
 @default_renderer(wrap_type=FBetaTopKMetric)
 class FBetaTopKMetricRenderer(TopKMetricRenderer):
     yaxis_name = "f_beta@k"
-    header = "F_beta@"
+    header = "F_beta"

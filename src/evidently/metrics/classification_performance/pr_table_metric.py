@@ -14,6 +14,7 @@ from evidently.base_metric import Metric
 from evidently.base_metric import MetricResult
 from evidently.calculations.classification_performance import calculate_pr_table
 from evidently.calculations.classification_performance import get_prediction_data
+from evidently.core import IncludeTags
 from evidently.metric_results import Label
 from evidently.metric_results import PredictionData
 from evidently.model.widget import BaseWidgetInfo
@@ -43,11 +44,19 @@ PRTable = Dict[Union[LabelModel, Label], List[List[Union[float, int]]]]
 
 
 class ClassificationPRTableResults(MetricResult):
+    class Config:
+        type_alias = "evidently:metric_result:ClassificationPRTableResults"
+        pd_include = False
+        field_tags = {"current": {IncludeTags.Current}, "reference": {IncludeTags.Reference}}
+
     current: Optional[PRTable] = None
     reference: Optional[PRTable] = None
 
 
 class ClassificationPRTable(Metric[ClassificationPRTableResults]):
+    class Config:
+        type_alias = "evidently:metric:ClassificationPRTable"
+
     def calculate(self, data: InputData) -> ClassificationPRTableResults:
         dataset_columns = process_columns(data.current_data, data.column_mapping)
         target_name = dataset_columns.utility_columns.target
@@ -65,12 +74,12 @@ class ClassificationPRTable(Metric[ClassificationPRTableResults]):
             reference=ref_pr_table,
         )
 
-    def calculate_metrics(self, target_data: pd.Series, prediction: PredictionData):
+    def calculate_metrics(self, target_data: pd.Series, prediction: PredictionData) -> PRTable:
         labels = prediction.labels
         if prediction.prediction_probas is None:
             raise ValueError("PR Table can be calculated only on binary probabilistic predictions")
-        binaraized_target = (target_data.values.reshape(-1, 1) == labels).astype(int)
-        pr_table = {}
+        binaraized_target = (target_data.to_numpy().reshape(-1, 1) == labels).astype(int)
+        pr_table: PRTable = {}
         if len(labels) <= 2:
             binaraized_target = pd.DataFrame(binaraized_target[:, 0])
             binaraized_target.columns = ["target"]

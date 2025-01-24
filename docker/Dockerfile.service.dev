@@ -21,10 +21,11 @@ RUN apt-get update && \
 WORKDIR /src
 COPY setup.py .
 COPY setupbase.py .
+COPY README.md .
 COPY src ./src
 
 RUN pip install . \
     && rm -rf /src
 
 WORKDIR /app
-CMD evidently ui
+CMD ["evidently", "ui", "--host", "0.0.0.0"]

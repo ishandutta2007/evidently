@@ -48,6 +48,9 @@ GroupingTypes.TestGroup.add_value(DATA_DRIFT_GROUP)
 
 
 class ColumnDriftParameter(ExcludeNoneMixin, TestParameters):  # type: ignore[misc] # pydantic Config
+    class Config:
+        type_alias = "evidently:test_parameters:ColumnDriftParameter"
+
     stattest: str
     score: float
     threshold: float
@@ -67,6 +70,9 @@ class ColumnDriftParameter(ExcludeNoneMixin, TestParameters):  # type: ignore[mi
 
 class ColumnsDriftParameters(ConditionTestParameters):
     # todo: rename to columns?
+    class Config:
+        type_alias = "evidently:test_parameters:ColumnsDriftParameters"
+
     features: Dict[str, ColumnDriftParameter]
 
     @classmethod
@@ -97,6 +103,7 @@ class BaseDataDriftMetricsTest(BaseCheckValueTest, WithDriftOptionsFields, ABC):
     group: ClassVar = DATA_DRIFT_GROUP.id
     _metric: DataDriftTable
     columns: Optional[List[str]]
+    feature_importance: Optional[bool]
 
     def __init__(
         self,
@@ -120,6 +127,7 @@ class BaseDataDriftMetricsTest(BaseCheckValueTest, WithDriftOptionsFields, ABC):
         text_stattest_threshold: Optional[float] = None,
         per_column_stattest_threshold: Optional[Dict[str, float]] = None,
         is_critical: bool = True,
+        feature_importance: Optional[bool] = False,
     ):
         super().__init__(
             eq=eq,
@@ -142,6 +150,7 @@ class BaseDataDriftMetricsTest(BaseCheckValueTest, WithDriftOptionsFields, ABC):
             num_stattest_threshold=num_stattest_threshold,
             text_stattest_threshold=text_stattest_threshold,
             per_column_stattest_threshold=per_column_stattest_threshold,
+            feature_importance=feature_importance,
         )
         self._metric = DataDriftTable(
             columns=self.columns,
@@ -155,6 +164,7 @@ class BaseDataDriftMetricsTest(BaseCheckValueTest, WithDriftOptionsFields, ABC):
             num_stattest_threshold=self.num_stattest_threshold,
             text_stattest_threshold=self.text_stattest_threshold,
             per_column_stattest_threshold=self.per_column_stattest_threshold,
+            feature_importance=self.feature_importance,
         )
 
     @property
@@ -175,6 +185,9 @@ class BaseDataDriftMetricsTest(BaseCheckValueTest, WithDriftOptionsFields, ABC):
 
 
 class TestNumberOfDriftedColumns(BaseDataDriftMetricsTest):
+    class Config:
+        type_alias = "evidently:test:TestNumberOfDriftedColumns"
+
     name: ClassVar = "Number of Drifted Features"
 
     def get_condition(self) -> TestValueCondition:
@@ -195,6 +208,9 @@ class TestNumberOfDriftedColumns(BaseDataDriftMetricsTest):
 
 
 class TestShareOfDriftedColumns(BaseDataDriftMetricsTest):
+    class Config:
+        type_alias = "evidently:test:TestShareOfDriftedColumns"
+
     name: ClassVar = "Share of Drifted Columns"
 
     def get_condition(self) -> TestValueCondition:
@@ -216,6 +232,9 @@ class TestShareOfDriftedColumns(BaseDataDriftMetricsTest):
 
 
 class TestColumnDrift(Test):
+    class Config:
+        type_alias = "evidently:test:TestColumnDrift"
+
     name: ClassVar = "Drift per Column"
     group: ClassVar = DATA_DRIFT_GROUP.id
     _metric: ColumnDriftMetric
@@ -268,11 +287,13 @@ class TestColumnDrift(Test):
             description=description,
             status=result_status,
             group=self.group,
-            groups={
-                GroupingTypes.ByFeature.id: self.column_name.display_name,
-            },
             parameters=ColumnDriftParameter.from_metric(drift_info, column_name=self.column_name.display_name),
         )
+
+    def groups(self) -> Dict[str, str]:
+        return {
+            GroupingTypes.ByFeature.id: self.column_name.display_name,
+        }
 
 
 class TestAllFeaturesValueDrift(BaseGenerator):
@@ -487,6 +508,17 @@ class TestNumberOfDriftedColumnsRenderer(TestRenderer):
         assert isinstance(parameters, ColumnsDriftParameters)
         df = parameters.to_dataframe()
         df = df.sort_values("Data Drift")
+        columns = ["Feature name"]
+        current_fi = obj.metric.get_result().current_fi
+        reference_fi = obj.metric.get_result().reference_fi
+        if current_fi is not None:
+            df["current_feature_importance"] = df["Feature name"].apply(lambda x: current_fi.get(x, ""))
+            columns.append("current_feature_importance")
+        if reference_fi is not None:
+            df["reference_feature_importance"] = df["Feature name"].apply(lambda x: reference_fi.get(x, ""))
+            columns.append("reference_feature_importance")
+        columns += ["Stattest", "Drift score", "Threshold", "Data Drift"]
+        df = df[columns]
         info.with_details(
             title="Drift Table",
             info=table_data(column_names=df.columns.to_list(), data=df.values),
@@ -502,9 +534,20 @@ class TestShareOfDriftedColumnsRenderer(TestRenderer):
         if result.status == TestStatus.ERROR:
             return info
         parameters = result.parameters
+        current_fi = obj.metric.get_result().current_fi
+        reference_fi = obj.metric.get_result().reference_fi
         assert isinstance(parameters, ColumnsDriftParameters)
         df = parameters.to_dataframe()
         df = df.sort_values("Data Drift")
+        columns = ["Feature name"]
+        if current_fi is not None:
+            df["current_feature_importance"] = df["Feature name"].apply(lambda x: current_fi.get(x, ""))
+            columns.append("current_feature_importance")
+        if reference_fi is not None:
+            df["reference_feature_importance"] = df["Feature name"].apply(lambda x: reference_fi.get(x, ""))
+            columns.append("reference_feature_importance")
+        columns += ["Stattest", "Drift score", "Threshold", "Data Drift"]
+        df = df[columns]
         info.details = [
             DetailsInfo(
                 id="drift_table",
@@ -576,6 +619,9 @@ class TestColumnDriftRenderer(TestRenderer):
 
 
 class TestEmbeddingsDrift(Test):
+    class Config:
+        type_alias = "evidently:test:TestEmbeddingsDrift"
+
     name: ClassVar = "Drift for embeddings"
     group: ClassVar = DATA_DRIFT_GROUP.id
     embeddings_name: str
@@ -617,6 +663,9 @@ class TestEmbeddingsDrift(Test):
             status=result_status,
             group=self.group,
         )
+
+    def groups(self) -> Dict[str, str]:
+        return {}
 
 
 @default_renderer(wrap_type=TestEmbeddingsDrift)

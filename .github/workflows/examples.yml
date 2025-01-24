@@ -1,0 +1,51 @@
+name: Example Tests
+
+on:
+  schedule:
+    - cron: "0 0 * * *"
+
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test-examples:
+    name: Test examples on ${{ matrix.os }} with py${{ matrix.python }}, min ${{ matrix.minimal }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-22.04]
+        python: ["3.8"]
+        minimal: [false]
+      fail-fast: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 🔍 Get bikes dataset cached
+        uses: ./.github/share-actions/get-bikes-dataset-cached
+
+      - name: Prepare Bikes dataset
+        run: unzip Bike-Sharing-Dataset.zip -d Bike-Sharing-Dataset
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          architecture: "x64"
+          cache: "pip"
+          cache-dependency-path: setup.py
+      - name: Install package
+        run: pip install -e .[dev,spark,fsspec]
+      - name: Install minimal reqs
+        if: matrix.minimal
+        run: pip install -r requirements.min.txt
+      - name: Prepare examples dependencies
+        run: pip install catboost sentence-transformers openai
+      - name: Export examples
+        run: jupyter nbconvert --to python examples/*/*.ipynb --output-dir example_scripts
+      - name: Run examples
+        run: python example_test.py
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY_GIT_DEV }}

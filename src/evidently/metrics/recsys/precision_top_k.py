@@ -4,6 +4,9 @@ from evidently.renderers.base_renderer import default_renderer
 
 
 class PrecisionTopKMetric(TopKMetric):
+    class Config:
+        type_alias = "evidently:metric:PrecisionTopKMetric"
+
     def key(self):
         return "precision"
 
@@ -11,4 +14,4 @@ class PrecisionTopKMetric(TopKMetric):
 @default_renderer(wrap_type=PrecisionTopKMetric)
 class PrecisionTopKMetricRenderer(TopKMetricRenderer):
     yaxis_name = "precision@k"
-    header = "Precision@"
+    header = "Precision"

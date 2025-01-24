@@ -1,18 +1,18 @@
 from typing import TYPE_CHECKING
 
-try:
-    from pydantic import v1  # noqa
+import pydantic
 
-    v = 2
-except ImportError:
-    v = 1
+v = 1 if pydantic.__version__.startswith("1") else 2
 
 if v == 2:
-    from pydantic.v1 import UUID4
     from pydantic.v1 import BaseConfig
     from pydantic.v1 import BaseModel
+    from pydantic.v1 import Extra
     from pydantic.v1 import Field
+    from pydantic.v1 import PrivateAttr
+    from pydantic.v1 import SecretStr
     from pydantic.v1 import ValidationError
+    from pydantic.v1 import create_model
     from pydantic.v1 import parse_obj_as
     from pydantic.v1 import validator
     from pydantic.v1.fields import SHAPE_DICT
@@ -31,11 +31,14 @@ if v == 2:
         from pydantic.v1.typing import DictStrAny
 
 else:
-    from pydantic import UUID4
-    from pydantic import BaseConfig
-    from pydantic import BaseModel
-    from pydantic import Field
-    from pydantic import ValidationError
+    from pydantic import BaseConfig  # type: ignore[assignment]
+    from pydantic import BaseModel  # type: ignore[assignment]
+    from pydantic import Extra  # type: ignore[assignment]
+    from pydantic import Field  # type: ignore[assignment]
+    from pydantic import PrivateAttr
+    from pydantic import SecretStr  # type: ignore[assignment]
+    from pydantic import ValidationError  # type: ignore[assignment]
+    from pydantic import create_model  # type: ignore[attr-defined,no-redef]
     from pydantic import parse_obj_as
     from pydantic import validator
     from pydantic.fields import SHAPE_DICT  # type: ignore[attr-defined,no-redef]
@@ -55,13 +58,13 @@ else:
 
 
 __all__ = [
-    "UUID4",
     "BaseConfig",
     "BaseModel",
     "Field",
     "ValidationError",
     "parse_obj_as",
     "validator",
+    "SecretStr",
     "SHAPE_DICT",
     "SHAPE_LIST",
     "SHAPE_SET",
@@ -74,4 +77,7 @@ __all__ = [
     "MappingIntStrAny",
     "AbstractSetIntStr",
     "DictStrAny",
+    "PrivateAttr",
+    "Extra",
+    "create_model",
 ]

@@ -126,7 +126,7 @@ def _mmd_stattest(
     feature_type: ColumnType,
     threshold: float,
 ) -> Tuple[float, bool]:
-    """Run the  emperical maximum mean discrepancy test.
+    """Run the  empirical maximum mean discrepancy test.
     Args:
         reference_data: reference data
         current_data: current data
@@ -136,19 +136,19 @@ def _mmd_stattest(
         p_value: p-value
         test_result: whether the drift is detected
     """
-    reference_data = reference_data.values.reshape(-1, 1)
-    current_data = current_data.values.reshape(-1, 1)
+    transformed_ref = reference_data.to_numpy().reshape(-1, 1)
+    transformed_curr = current_data.to_numpy().reshape(-1, 1)
 
-    p_value, mmd = mmd_pval(reference_data, current_data)
+    p_value, mmd = mmd_pval(transformed_ref, transformed_curr)
 
     return p_value, p_value < threshold
 
 
-emperical_mmd = StatTest(
-    name="emperical_mmd",
-    display_name="emperical_mmd",
+empirical_mmd = StatTest(
+    name="empirical_mmd",
+    display_name="empirical_mmd",
     allowed_feature_types=[ColumnType.Numerical],
     default_threshold=0.1,
 )
 
-register_stattest(emperical_mmd, _mmd_stattest)
+register_stattest(empirical_mmd, _mmd_stattest)

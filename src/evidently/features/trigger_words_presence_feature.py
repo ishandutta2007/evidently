@@ -1,71 +1,59 @@
 import re
+from typing import Any
+from typing import ClassVar
+from typing import List
 from typing import Optional
-from typing import Tuple
 
 import numpy as np
-import pandas as pd
 from nltk.stem.wordnet import WordNetLemmatizer
 
-from evidently.base_metric import additional_feature
-from evidently.features.generated_features import GeneratedFeature
-from evidently.utils.data_preprocessing import DataDefinition
+from evidently._pydantic_compat import PrivateAttr
+from evidently.core import ColumnType
+from evidently.features.generated_features import ApplyColumnGeneratedFeature
 
 
-class TriggerWordsPresent(GeneratedFeature):
+class TriggerWordsPresent(ApplyColumnGeneratedFeature):
+    class Config:
+        type_alias = "evidently:feature:TriggerWordsPresent"
+
+    __feature_type__: ClassVar = ColumnType.Categorical
     column_name: str
-    words_list: Tuple = ()
+    words_list: List[str]
     lemmatize: bool = True
-    _lem: WordNetLemmatizer
+    _lem: Optional[WordNetLemmatizer] = PrivateAttr(None)
 
-    def __init__(self, column_name: str, words_list=(), lemmatize=True, display_name: Optional[str] = None):
-
-        self.column_name = column_name
+    def __init__(
+        self,
+        column_name: str,
+        words_list: List[str],
+        lemmatize: bool = True,
+        display_name: Optional[str] = None,
+    ):
         self.words_list = words_list
         self.lemmatize = lemmatize
         self.display_name = display_name
-        super().__init__()
+        super().__init__(column_name=column_name)
 
-    def generate_feature(self, data: pd.DataFrame, data_definition: DataDefinition) -> pd.DataFrame:
-        if not hasattr(self, "_lem"):
+    @property
+    def lem(self):
+        if self._lem is None:
             import nltk
 
             nltk.download("wordnet", quiet=True)
             self._lem = WordNetLemmatizer()
+        return self._lem
 
-        def listed_words_present(s, words_list=(), lemmatize=True):
-            if s is None or (isinstance(s, float) and np.isnan(s)):
-                return 0
-            words = re.sub("[^A-Za-z0-9 ]+", "", s).split()
-            for word_ in words:
-                word = word_.lower()
-                if lemmatize:
-                    word = self._lem.lemmatize(word)
-                if word in words_list:
-                    return 1
+    def apply(self, value: Any):
+        if value is None or (isinstance(value, float) and np.isnan(value)):
             return 0
-
-        return pd.DataFrame(
-            dict(
-                [
-                    (
-                        self._feature_column_name(),
-                        data[self.column_name].apply(
-                            lambda x: listed_words_present(
-                                x,
-                                words_list=self.words_list,
-                                lemmatize=self.lemmatize,
-                            )
-                        ),
-                    )
-                ]
-            )
-        )
-
-    def get_parameters(self):
-        return self.column_name, tuple(self.words_list), self.lemmatize
-
-    def feature_name(self):
-        return additional_feature(self, self._feature_column_name(), self.display_name or self._feature_display_name())
+        words = re.sub("[^A-Za-z0-9 ]+", "", value).split()
+        for word_ in words:
+            word = word_.lower()
+            if self.lemmatize:
+                word = self.lem.lemmatize(word)
+            if word in self.words_list:
+                return 1
+        return 0
 
     def _feature_column_name(self):
         return self.column_name + "_" + "_".join(self.words_list) + "_" + str(self.lemmatize)

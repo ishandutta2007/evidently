@@ -7,6 +7,7 @@ import pandas as pd
 from evidently.base_metric import InputData
 from evidently.base_metric import Metric
 from evidently.base_metric import MetricResult
+from evidently.base_metric import UsesRawDataMixin
 from evidently.calculations.data_drift import ColumnDataDriftMetrics
 from evidently.calculations.data_drift import get_dataset_drift
 from evidently.calculations.data_drift import get_one_column_drift
@@ -19,6 +20,7 @@ from evidently.features.generated_features import FeatureDescriptor
 from evidently.features.generated_features import GeneratedFeature
 from evidently.metric_results import DatasetColumns
 from evidently.metric_results import HistogramData
+from evidently.metric_results import ScatterField
 from evidently.model.widget import BaseWidgetInfo
 from evidently.options.base import AnyOptions
 from evidently.options.data_drift import DataDriftOptions
@@ -33,6 +35,7 @@ from evidently.renderers.html_widgets import header_text
 from evidently.renderers.html_widgets import plotly_figure
 from evidently.renderers.html_widgets import rich_table_data
 from evidently.utils.data_operations import process_columns
+from evidently.utils.data_operations import recognize_column_type_
 from evidently.utils.data_preprocessing import DataDefinition
 from evidently.utils.visualizations import plot_agg_line_data
 from evidently.utils.visualizations import plot_distr_with_perc_button
@@ -40,6 +43,9 @@ from evidently.utils.visualizations import plot_scatter_for_data_drift
 
 
 class TextDescriptorsDriftMetricResults(MetricResult):
+    class Config:
+        type_alias = "evidently:metric_result:TextDescriptorsDriftMetricResults"
+
     number_of_columns: int
     number_of_drifted_columns: int
     share_of_drifted_columns: float
@@ -48,7 +54,10 @@ class TextDescriptorsDriftMetricResults(MetricResult):
     dataset_columns: DatasetColumns
 
 
-class TextDescriptorsDriftMetric(Metric[TextDescriptorsDriftMetricResults]):
+class TextDescriptorsDriftMetric(UsesRawDataMixin, Metric[TextDescriptorsDriftMetricResults]):
+    class Config:
+        type_alias = "evidently:metric:TextDescriptorsDriftMetric"
+
     column_name: str
     stattest: Optional[PossibleStatTestType] = None
     stattest_threshold: Optional[float] = None
@@ -104,18 +113,21 @@ class TextDescriptorsDriftMetric(Metric[TextDescriptorsDriftMetricResults]):
         else:
             agg_data = True
         curr_text_df = pd.concat(
-            [data.get_current_column(x.feature_name()) for x in list(self.generated_text_features.values())],
+            [data.get_current_column(x.as_column()) for x in list(self.generated_text_features.values())],
             axis=1,
         )
-        curr_text_df.columns = list(self.generated_text_features.keys())
+        curr_text_df.columns = pd.Index(list(self.generated_text_features.keys()))
 
         ref_text_df = pd.concat(
-            [data.get_reference_column(x.feature_name()) for x in list(self.generated_text_features.values())],
+            [data.get_reference_column(x.as_column()) for x in list(self.generated_text_features.values())],
             axis=1,
         )
-        ref_text_df.columns = list(self.generated_text_features.keys())
+        ref_text_df.columns = pd.Index(list(self.generated_text_features.keys()))
         # text_dataset_columns = DatasetColumns(num_feature_names=curr_text_df.columns)
-        text_dataset_columns = process_columns(ref_text_df, ColumnMapping(numerical_features=ref_text_df.columns))
+        text_dataset_columns = process_columns(
+            ref_text_df,
+            ColumnMapping(numerical_features=ref_text_df.columns.tolist()),
+        )
 
         drift_by_columns: Dict[str, ColumnDataDriftMetrics] = {}
         for col in curr_text_df.columns:
@@ -123,6 +135,11 @@ class TextDescriptorsDriftMetric(Metric[TextDescriptorsDriftMetricResults]):
                 current_data=curr_text_df,
                 reference_data=ref_text_df,
                 column_name=col,
+                column_type=recognize_column_type_(
+                    dataset=pd.concat([ref_text_df, curr_text_df]),
+                    column_name=col,
+                    columns=text_dataset_columns,
+                ),
                 options=self._drift_options,
                 dataset_columns=text_dataset_columns,
                 agg_data=agg_data,
@@ -140,7 +157,11 @@ class TextDescriptorsDriftMetric(Metric[TextDescriptorsDriftMetricResults]):
 
 
 @default_renderer(wrap_type=TextDescriptorsDriftMetric)
-class DataDriftTableRenderer(MetricRenderer):
+class TextDescriptorsDriftRenderer(MetricRenderer):
+    def render_pandas(self, obj: TextDescriptorsDriftMetric) -> pd.DataFrame:
+        result: TextDescriptorsDriftMetricResults = obj.get_result()
+        return pd.concat([v.get_pandas() for v in result.drift_by_columns.values()])
+
     def _generate_column_params(
         self, column_name: str, data: ColumnDataDriftMetrics, agg_data: bool
     ) -> Optional[RichTableDataRow]:
@@ -156,9 +177,11 @@ class DataDriftTableRenderer(MetricRenderer):
         data_drift = "Detected" if data.drift_detected else "Not Detected"
         if data.column_type == "num" and data.scatter is not None:
             if not agg_data:
+                if not isinstance(data.scatter, ScatterField):
+                    raise ValueError(f"TypeMismatch, data.scatter({type(data.scatter)}) expected to be ScatterField ")
                 scatter_fig = plot_scatter_for_data_drift(
-                    curr_y=data.scatter.scatter[data.column_name],
-                    curr_x=data.scatter.scatter[data.scatter.x_name],
+                    curr_y=data.scatter.scatter[data.column_name].tolist(),
+                    curr_x=data.scatter.scatter[data.scatter.x_name].tolist(),
                     y0=data.scatter.plot_shape["y0"],
                     y1=data.scatter.plot_shape["y1"],
                     y_name=data.column_name,

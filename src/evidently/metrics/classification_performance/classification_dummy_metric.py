@@ -12,6 +12,7 @@ from evidently.base_metric import MetricResult
 from evidently.calculations.classification_performance import calculate_matrix
 from evidently.calculations.classification_performance import calculate_metrics
 from evidently.calculations.classification_performance import k_probability_threshold
+from evidently.core import IncludeTags
 from evidently.metric_results import DatasetClassificationQuality
 from evidently.metric_results import PredictionData
 from evidently.metrics.classification_performance.base_classification_metric import ThresholdClassificationMetric
@@ -30,8 +31,11 @@ from evidently.utils.data_operations import process_columns
 
 class ClassificationDummyMetricResults(MetricResult):
     class Config:
+        type_alias = "evidently:metric_result:ClassificationDummyMetricResults"
         dict_exclude_fields = {"metrics_matrix"}
         pd_exclude_fields = {"metrics_matrix"}
+
+        field_tags = {"by_reference_dummy": {IncludeTags.Reference}, "metrics_matrix": {IncludeTags.Extra}}
 
     dummy: DatasetClassificationQuality
     by_reference_dummy: Optional[DatasetClassificationQuality]
@@ -40,6 +44,9 @@ class ClassificationDummyMetricResults(MetricResult):
 
 
 class ClassificationDummyMetric(ThresholdClassificationMetric[ClassificationDummyMetricResults]):
+    class Config:
+        type_alias = "evidently:metric:ClassificationDummyMetric"
+
     _quality_metric: ClassificationQualityMetric
 
     def __init__(
@@ -69,8 +76,8 @@ class ClassificationDummyMetric(ThresholdClassificationMetric[ClassificationDumm
         #  dummy by current
         labels_ratio = data.current_data[target_name].value_counts(normalize=True)
         np.random.seed(0)
-        dummy_preds = np.random.choice(labels_ratio.index, data.current_data.shape[0], p=labels_ratio)
-        dummy_preds = pd.Series(dummy_preds)
+        dummy_preds_choices = np.random.choice(labels_ratio.index, data.current_data.shape[0], p=labels_ratio)
+        dummy_preds = pd.Series(dummy_preds_choices)
         prediction: Optional[PredictionData] = None
 
         if prediction_name is not None:
@@ -140,7 +147,7 @@ class ClassificationDummyMetric(ThresholdClassificationMetric[ClassificationDumm
             }
         if prediction is not None and prediction.prediction_probas is not None:
             # dummy log_loss and roc_auc
-            binaraized_target = (target.astype(str).values.reshape(-1, 1) == list(labels)).astype(int)
+            binaraized_target = (target.astype(str).to_numpy().reshape(-1, 1) == list(labels)).astype(int)
             dummy_prediction = np.full(
                 prediction.prediction_probas.shape,
                 1 / prediction.prediction_probas.shape[1],
@@ -154,8 +161,8 @@ class ClassificationDummyMetric(ThresholdClassificationMetric[ClassificationDumm
         if data.reference_data is not None:
             labels_ratio = data.reference_data[target_name].value_counts(normalize=True)
             np.random.seed(1)
-            dummy_preds = np.random.choice(labels_ratio.index, data.current_data.shape[0], p=labels_ratio)
-            dummy_preds = pd.Series(dummy_preds)
+            dummy_preds_choices = np.random.choice(labels_ratio.index, data.current_data.shape[0], p=labels_ratio)
+            dummy_preds = pd.Series(dummy_preds_choices)
 
             if prediction_name is not None:
                 target, prediction = self.get_target_prediction_data(data.current_data, data.column_mapping)
@@ -185,7 +192,7 @@ class ClassificationDummyMetric(ThresholdClassificationMetric[ClassificationDumm
                 )
             if prediction is not None and prediction.prediction_probas is not None:
                 # dummy log_loss and roc_auc
-                binaraized_target = (target.astype(str).values.reshape(-1, 1) == list(labels)).astype(int)
+                binaraized_target = (target.astype(str).to_numpy().reshape(-1, 1) == list(labels)).astype(int)
                 dummy_prediction = np.full(
                     prediction.prediction_probas.shape,
                     1 / prediction.prediction_probas.shape[1],
@@ -291,5 +298,9 @@ class ClassificationDummyMetricRenderer(MetricRenderer):
 
         return [
             header_text(label="Dummy Classification Quality"),
-            table_data(column_names=columns, data=np.around(in_table_data, 3).values, title=""),
+            table_data(
+                column_names=columns,
+                data=np.around(in_table_data, 3).values,  # type: ignore[attr-defined]
+                title="",
+            ),
         ]

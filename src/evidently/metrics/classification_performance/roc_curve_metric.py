@@ -8,6 +8,7 @@ from evidently.base_metric import InputData
 from evidently.base_metric import Metric
 from evidently.base_metric import MetricResult
 from evidently.calculations.classification_performance import get_prediction_data
+from evidently.core import IncludeTags
 from evidently.metric_results import PredictionData
 from evidently.metric_results import ROCCurve
 from evidently.metric_results import ROCCurveData
@@ -22,11 +23,20 @@ from evidently.utils.data_operations import process_columns
 
 
 class ClassificationRocCurveResults(MetricResult):
+    class Config:
+        type_alias = "evidently:metric_result:ClassificationRocCurveResults"
+        pd_include = False
+
+        field_tags = {"current_roc_curve": {IncludeTags.Current}, "reference_roc_curve": {IncludeTags.Reference}}
+
     current_roc_curve: Optional[ROCCurve] = None
     reference_roc_curve: Optional[ROCCurve] = None
 
 
 class ClassificationRocCurve(Metric[ClassificationRocCurveResults]):
+    class Config:
+        type_alias = "evidently:metric:ClassificationRocCurve"
+
     def calculate(self, data: InputData) -> ClassificationRocCurveResults:
         dataset_columns = process_columns(data.current_data, data.column_mapping)
         target_name = dataset_columns.utility_columns.target
@@ -50,8 +60,8 @@ class ClassificationRocCurve(Metric[ClassificationRocCurveResults]):
         labels = prediction.labels
         if prediction.prediction_probas is None:
             raise ValueError("Roc Curve can be calculated only on binary probabilistic predictions")
-        binaraized_target = (target_data.values.reshape(-1, 1) == labels).astype(int)
-        roc_curve = {}
+        binaraized_target = (target_data.to_numpy().reshape(-1, 1) == labels).astype(int)
+        roc_curve: ROCCurve = {}
         if len(labels) <= 2:
             binaraized_target = pd.DataFrame(binaraized_target[:, 0])
             binaraized_target.columns = ["target"]

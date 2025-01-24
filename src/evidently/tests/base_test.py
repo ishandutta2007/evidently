@@ -13,7 +13,6 @@ from typing import Type
 from typing import TypeVar
 from typing import Union
 
-from evidently._pydantic_compat import Field
 from evidently.base_metric import BaseResult
 from evidently.base_metric import Metric
 from evidently.base_metric import MetricResult
@@ -98,11 +97,16 @@ class TestStatus(Enum):
 
 class TestParameters(EvidentlyBaseModel, BaseResult):  # type: ignore[misc] # pydantic Config
     class Config:
+        type_alias = "evidently:test_parameters:TestParameters"
         field_tags = {"type": {IncludeTags.TypeField}}
+        is_base_type = True
 
 
 class TestResult(EnumValueMixin, MetricResult):  # todo: create common base class
     # short name/title from the test class
+    class Config:
+        type_alias = "evidently:metric_result:TestResult"
+
     name: str
     # what was checked, what threshold (current value 13 is not ok with condition less than 5)
     description: str
@@ -110,7 +114,6 @@ class TestResult(EnumValueMixin, MetricResult):  # todo: create common base clas
     status: TestStatus
     # grouping parameters
     group: str
-    groups: Dict[str, str] = Field(default_factory=dict, exclude=True)
     parameters: Optional[TestParameters]
     _exception: Optional[BaseException] = None
 
@@ -141,6 +144,9 @@ class TestResult(EnumValueMixin, MetricResult):  # todo: create common base clas
 
 
 class Test(WithTestAndMetricDependencies):
+    class Config:
+        is_base_type = True
+
     """
     all fields in test class with type that is subclass of Metric would be used as dependencies of test.
     """
@@ -168,13 +174,19 @@ class Test(WithTestAndMetricDependencies):
     def get_id(self) -> str:
         return self.__class__.__name__
 
+    @abc.abstractmethod
+    def groups(self) -> Dict[str, str]:
+        raise NotImplementedError
 
-class ValueSource(Enum):
-    USER = "user"
-    CURRENT = "current"
-    REFERENCE = "reference"
-    DUMMY = "dummy"
-    OTHER = "other"
+    def get_groups(self) -> Dict[str, str]:
+        groups = self.groups()
+        groups.update(
+            {
+                GroupingTypes.TestGroup.id: self.group,
+                GroupingTypes.TestType.id: self.name,
+            }
+        )
+        return groups
 
 
 class TestValueCondition(ExcludeNoneMixin):
@@ -197,7 +209,6 @@ class TestValueCondition(ExcludeNoneMixin):
     lte: Optional[NumericApprox] = None
     not_eq: Optional[Numeric] = None
     not_in: Optional[List[Union[Numeric, str, bool]]] = None
-    source: Optional[ValueSource] = Field(None, exclude=True)  # todo: temporary to not fix tests
 
     def has_condition(self) -> bool:
         """
@@ -268,6 +279,9 @@ class TestValueCondition(ExcludeNoneMixin):
 
 
 class ConditionTestParameters(TestParameters):
+    class Config:
+        type_alias = "evidently:test_parameters:ConditionTestParameters"
+
     condition: TestValueCondition
 
 
@@ -299,10 +313,16 @@ class BaseConditionsTest(Test, TestValueCondition, ABC):
 
 
 class CheckValueParameters(ConditionTestParameters):
+    class Config:
+        type_alias = "evidently:test_parameters:CheckValueParameters"
+
     value: Optional[Numeric]
 
 
 class ColumnCheckValueParameters(CheckValueParameters):
+    class Config:
+        type_alias = "evidently:test_parameters:ColumnCheckValueParameters"
+
     column_name: str
 
 
@@ -371,7 +391,6 @@ class BaseCheckValueTest(BaseConditionsTest):
         except ValueError:
             result.mark_as_error("Cannot calculate the condition")
 
-        result.groups.update(self.groups())
         return result
 
 

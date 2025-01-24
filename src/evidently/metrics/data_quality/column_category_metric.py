@@ -9,6 +9,8 @@ from evidently.base_metric import ColumnName
 from evidently.base_metric import InputData
 from evidently.base_metric import Metric
 from evidently.base_metric import MetricResult
+from evidently.core import IncludeTags
+from evidently.metric_results import HistogramData
 from evidently.model.widget import BaseWidgetInfo
 from evidently.options.base import AnyOptions
 from evidently.renderers.base_renderer import MetricRenderer
@@ -19,24 +21,73 @@ from evidently.renderers.html_widgets import header_text
 
 
 class CategoryStat(MetricResult):
+    class Config:
+        type_alias = "evidently:metric_result:CategoryStat"
+        field_tags = {"all_num": {IncludeTags.Extra}}
+
     all_num: int
     category_num: int
     category_ratio: float
 
 
+class CountOfValues(MetricResult):
+    class Config:
+        type_alias = "evidently:metric_result:CountOfValues"
+
+    current: HistogramData
+    reference: Optional[HistogramData] = None
+
+
 class ColumnCategoryMetricResult(MetricResult):
+    class Config:
+        type_alias = "evidently:metric_result:ColumnCategoryMetricResult"
+        pd_exclude_fields = {"counts"}
+        field_tags = {
+            "current": {IncludeTags.Current},
+            "reference": {IncludeTags.Reference},
+            "column_name": {IncludeTags.Parameter},
+            "counts": {IncludeTags.Extra},
+        }
+        smart_union = True
+
+    def __init__(self, **data) -> None:
+        """for backward compatibility"""
+        if "counts_of_values" in data:
+            counts_of_values: Dict[str, pd.DataFrame] = data.pop("counts_of_values")
+            counts = CountOfValues(
+                current=HistogramData(x=counts_of_values["current"]["x"], count=counts_of_values["current"]["count"])
+            )
+            if "reference" in counts_of_values:
+                counts.reference = HistogramData(
+                    x=counts_of_values["reference"]["x"], count=counts_of_values["reference"]["count"]
+                )
+            data["counts"] = counts
+        super().__init__(**data)
+
     column_name: str
-    category: Union[int, float, str]
+    category: Union[bool, int, float, str]
     current: CategoryStat
     reference: Optional[CategoryStat] = None
-    counts_of_values: Dict[str, pd.DataFrame]
+    counts: CountOfValues
+
+    @property
+    def counts_of_values(self) -> Dict[str, pd.DataFrame]:
+        """for backward compatibility"""
+        result = {"current": pd.DataFrame({"x": self.counts.current.x, "count": self.counts.current.count})}
+        if self.counts.reference is not None:
+            result["reference"] = pd.DataFrame({"x": self.counts.reference.x, "count": self.counts.reference.count})
+        return result
 
 
 class ColumnCategoryMetric(Metric[ColumnCategoryMetricResult]):
     """Calculates count and shares of values in the predefined values list"""
 
+    class Config:
+        type_alias = "evidently:metric:ColumnCategoryMetric"
+        smart_union = True
+
     column_name: ColumnName
-    category: Union[int, float, str]
+    category: Union[bool, int, float, str]
 
     def __init__(
         self, column_name: Union[str, ColumnName], category: Union[int, float, str], options: AnyOptions = None
@@ -52,15 +103,14 @@ class ColumnCategoryMetric(Metric[ColumnCategoryMetricResult]):
         current_column = data.get_current_column(self.column_name)
         reference_column = data.get_reference_column(self.column_name)
 
-        counts_of_values = None
         counts_of_values = {}
         current_counts = current_column.value_counts(dropna=False).reset_index()
-        current_counts.columns = ["x", "count"]
+        current_counts.columns = pd.Index(["x", "count"])
         counts_of_values["current"] = current_counts.head(10)
         counts_of_values["current"].index = counts_of_values["current"].index.astype("str")
         if reference_column is not None:
             reference_counts = reference_column.value_counts(dropna=False).reset_index()
-            reference_counts.columns = ["x", "count"]
+            reference_counts.columns = pd.Index(["x", "count"])
             counts_of_values["reference"] = reference_counts.head(10)
             counts_of_values["reference"].index = counts_of_values["reference"].index.astype("str")
 

@@ -101,9 +101,12 @@ def get_prediction_data(
     target = data_columns.utility_columns.target
 
     if isinstance(prediction, list) and len(prediction) > 2:
+        pred_data = data[prediction].idxmax(axis=1)
+        if is_integer_dtype(data[target]):
+            pred_data = pred_data.apply(lambda x: int(x) if x is not None else None)
         # list of columns with prediction probas, should be same as target labels
         return PredictionData(
-            predictions=data[prediction].idxmax(axis=1),
+            predictions=pred_data,
             prediction_probas=data[prediction],
             labels=prediction,
         )
@@ -154,25 +157,29 @@ def get_prediction_data(
         and is_float_dtype(data[prediction])
     ):
         pos_label = _check_pos_labels(pos_label, labels)
-        if prediction not in labels:
-            raise ValueError(
-                "No prediction for the target labels were found. "
-                "Consider to rename columns with the prediction to match target labels."
-            )
 
+        neg_label = None
+        if prediction in labels and pos_label != prediction:
+            neg_label = prediction
         # get negative label for binary classification
-        labels = pd.Series(labels)
-        neg_label = labels[labels != pos_label].iloc[0]
-        if pos_label == prediction:
-            pos_preds = data[prediction]
 
-        else:
+        if neg_label is None:
+            for label in labels:
+                if label != pos_label:
+                    neg_label = label
+        if neg_label is None:
+            raise ValueError("Failed to determine negative label")
+        if prediction in labels and neg_label == prediction:
+            neg_preds = data[prediction]
             pos_preds = data[prediction].apply(lambda x: 1.0 - x)
+        else:
+            pos_preds = data[prediction]
+            neg_preds = data[prediction].apply(lambda x: 1.0 - x)
 
         prediction_probas = pd.DataFrame.from_dict(
             {
                 pos_label: pos_preds,
-                neg_label: pos_preds.apply(lambda x: 1.0 - x),
+                neg_label: neg_preds,
             }
         )
         predictions = threshold_probability_labels(prediction_probas, pos_label, neg_label, threshold)
@@ -225,7 +232,7 @@ def get_prediction_data(
     return PredictionData(
         predictions=data[prediction],
         prediction_probas=None,
-        labels=data[prediction].unique().tolist(),
+        labels=data[prediction].unique().tolist(),  # type: ignore[operator]
     )
 
 
@@ -376,7 +383,7 @@ def calculate_metrics(
         f1 = metrics.f1_score(target, prediction.predictions, average="macro")
     if prediction.prediction_probas is not None:
         binaraized_target = (
-            target.astype(str).values.reshape(-1, 1) == list(prediction.prediction_probas.columns.astype(str))
+            target.astype(str).to_numpy().reshape(-1, 1) == list(prediction.prediction_probas.columns.astype(str))
         ).astype(int)
         prediction_probas_array = prediction.prediction_probas.to_numpy()
         roc_auc = metrics.roc_auc_score(binaraized_target, prediction_probas_array, average="macro")
@@ -384,26 +391,11 @@ def calculate_metrics(
         plot_data = collect_plot_data(prediction.prediction_probas)
     if len(prediction.labels) == 2 and prediction.prediction_probas is not None:
         fprs, tprs, thrs = metrics.roc_curve(target == pos_label, prediction.prediction_probas[pos_label])
-        df = pd.DataFrame(
-            {
-                "true": (target == pos_label).astype(int).values,
-                "preds": prediction.prediction_probas[pos_label].values,
-            }
+        tnrs = 1 - fprs
+        fnrs = 1 - tprs
+        rate_plots_data = RatesPlotData(
+            thrs=thrs.tolist(), tpr=tprs.tolist(), fpr=fprs.tolist(), fnr=fnrs.tolist(), tnr=tnrs.tolist()
         )
-        tnrs = []
-        fnrs = []
-        for tr in thrs:
-            if tr < 1:
-                tn = df[(df.true == 0) & (df.preds < tr)].shape[0]
-                fn = df[(df.true == 1) & (df.preds < tr)].shape[0]
-                tp = df[(df.true == 1) & (df.preds >= tr)].shape[0]
-                fp = df[(df.true == 0) & (df.preds >= tr)].shape[0]
-                tnrs.append(tn / (tn + fp))
-                fnrs.append(fn / (fn + tp))
-            else:
-                fnrs.append(1)
-                tnrs.append(1)
-        rate_plots_data = RatesPlotData(thrs=thrs.tolist(), tpr=tprs.tolist(), fpr=fprs.tolist(), fnr=fnrs, tnr=tnrs)
 
     return DatasetClassificationQuality(
         accuracy=metrics.accuracy_score(target, prediction.predictions),

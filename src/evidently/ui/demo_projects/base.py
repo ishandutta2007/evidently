@@ -9,11 +9,12 @@ import pandas as pd
 
 from evidently import ColumnMapping
 from evidently.report import Report
+from evidently.suite.base_suite import Snapshot
 from evidently.test_suite import TestSuite
-from evidently.ui.remote import RemoteWorkspace
-from evidently.ui.workspace import Project
+from evidently.ui.base import Project
 from evidently.ui.workspace import Workspace
 from evidently.ui.workspace import WorkspaceBase
+from evidently.ui.workspace.remote import RemoteWorkspace
 
 DemoData = Tuple[pd.DataFrame, pd.DataFrame, ColumnMapping]
 
@@ -26,6 +27,7 @@ class DemoProject:
 
     create_data: Callable[[], DemoData]
     create_report: Optional[Callable[[int, DemoData], Report]]
+    create_snapshot: Optional[Callable[[int, DemoData], Snapshot]]
     create_test_suite: Optional[Callable[[int, DemoData], TestSuite]]
     count: int
 
@@ -46,6 +48,10 @@ class DemoProject:
         data = self.create_data()
 
         for i in range(0, self.count):
+            if self.create_snapshot is not None:
+                snapshot = self.create_snapshot(i, data)
+                ws.add_snapshot(project.id, snapshot)
+
             if self.create_report is not None:
                 report = self.create_report(i, data)
                 ws.add_report(project.id, report)

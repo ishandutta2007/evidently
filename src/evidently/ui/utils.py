@@ -1,27 +1,19 @@
 import json
-import os
 import urllib.parse
+from typing import Any
 from typing import Optional
+from typing import Type
+from typing import TypeVar
+from typing import Union
 
 import requests
-from fastapi import Header
-from fastapi import HTTPException
-from typing_extensions import Annotated
 
+from evidently._pydantic_compat import BaseModel
 from evidently._pydantic_compat import parse_obj_as
+from evidently.ui.storage.common import SECRET_HEADER_NAME
 from evidently.utils import NumpyEncoder
 
-SECRET = os.environ.get("EVIDENTLY_SECRET", None)
-
-
-def set_secret(secret: Optional[str]):
-    global SECRET
-    SECRET = secret
-
-
-async def authenticated(evidently_secret: Annotated[Optional[str], Header()] = None):
-    if SECRET is not None and evidently_secret != SECRET:
-        raise HTTPException(403, "Not allowed")
+T = TypeVar("T", bound=BaseModel)
 
 
 class RemoteClientBase:
@@ -35,10 +27,10 @@ class RemoteClientBase:
         method: str,
         query_params: Optional[dict] = None,
         body: Optional[dict] = None,
-        response_model=None,
-    ):
+        response_model: Optional[Type[T]] = None,
+    ) -> Union[T, requests.Response]:
         # todo: better encoding
-        headers = {"evidently-secret": self.secret}
+        headers = {SECRET_HEADER_NAME: self.secret}
         data = None
         if body is not None:
             headers["Content-Type"] = "application/json"
@@ -52,3 +44,7 @@ class RemoteClientBase:
         if response_model is not None:
             return parse_obj_as(response_model, response.json())
         return response
+
+
+def parse_json(body: bytes) -> Any:
+    return json.loads(body)

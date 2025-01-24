@@ -9,6 +9,7 @@ from evidently.base_metric import InputData
 from evidently.base_metric import Metric
 from evidently.base_metric import MetricResult
 from evidently.core import ColumnType
+from evidently.core import IncludeTags
 from evidently.metric_results import Distribution
 from evidently.metric_results import HistogramData
 from evidently.model.widget import BaseWidgetInfo
@@ -23,12 +24,23 @@ from evidently.utils.visualizations import plot_distr_with_perc_button
 
 
 class ColumnDistributionMetricResult(MetricResult):
+    class Config:
+        type_alias = "evidently:metric_result:ColumnDistributionMetricResult"
+        field_tags = {
+            "current": {IncludeTags.Current},
+            "reference": {IncludeTags.Reference},
+            "column_name": {IncludeTags.Parameter},
+        }
+
     column_name: str
     current: Distribution
     reference: Optional[Distribution] = None
 
 
 class ColumnDistributionMetric(Metric[ColumnDistributionMetricResult]):
+    class Config:
+        type_alias = "evidently:metric:ColumnDistributionMetric"
+
     """Calculates distribution for the column"""
 
     column_name: ColumnName

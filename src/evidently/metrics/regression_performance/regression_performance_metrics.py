@@ -12,6 +12,7 @@ from evidently.base_metric import InputData
 from evidently.base_metric import Metric
 from evidently.base_metric import MetricResult
 from evidently.calculations.regression_performance import calculate_regression_performance
+from evidently.core import IncludeTags
 from evidently.metric_results import DatasetColumns
 from evidently.metric_results import Histogram
 from evidently.metrics.regression_performance.objects import RegressionMetricScatter
@@ -30,6 +31,11 @@ from evidently.utils.visualizations import make_hist_for_num_plot
 
 
 class RegressionMetrics(MetricResult):
+    class Config:
+        type_alias = "evidently:metric_result:RegressionMetrics"
+        pd_exclude_fields = {"underperformance"}
+        field_tags = {"underperformance": {IncludeTags.Extra}}
+
     r2_score: float
     rmse: float
     mean_error: float
@@ -41,8 +47,24 @@ class RegressionMetrics(MetricResult):
 
 class RegressionPerformanceMetricsResults(MetricResult):
     class Config:
+        type_alias = "evidently:metric_result:RegressionPerformanceMetricsResults"
         dict_exclude_fields = {"hist_for_plot", "vals_for_plots", "me_hist_for_plot"}
-        pd_exclude_fields = {"hist_for_plot", "vals_for_plots", "me_hist_for_plot"}
+        pd_exclude_fields = {"hist_for_plot", "vals_for_plots", "me_hist_for_plot", "error_bias", "error_normality"}
+        field_tags = {
+            "current": {IncludeTags.Current},
+            "reference": {IncludeTags.Reference},
+            "rmse_default": {IncludeTags.Extra},
+            "me_default_sigma": {IncludeTags.Extra},
+            "mean_abs_error_default": {IncludeTags.Extra},
+            "mean_abs_perc_error_default": {IncludeTags.Extra},
+            "abs_error_max_default": {IncludeTags.Extra},
+            "error_std": {IncludeTags.Extra},
+            "abs_error_std": {IncludeTags.Extra},
+            "abs_perc_error_std": {IncludeTags.Extra},
+            "error_normality": {IncludeTags.Extra},
+            "vals_for_plots": {IncludeTags.Render},
+            "error_bias": {IncludeTags.Extra},
+        }
 
     columns: DatasetColumns
 
@@ -66,6 +88,9 @@ class RegressionPerformanceMetricsResults(MetricResult):
 
 
 class RegressionPerformanceMetrics(Metric[RegressionPerformanceMetricsResults]):
+    class Config:
+        type_alias = "evidently:metric:RegressionPerformanceMetrics"
+
     def get_parameters(self) -> tuple:
         return ()
 
@@ -127,8 +152,9 @@ class RegressionPerformanceMetrics(Metric[RegressionPerformanceMetricsResults]):
         # mape default values
         # optimal constant for mape
         s = data.current_data[data.column_mapping.target]
-        inv_y = 1 / s[s != 0].values
-        w = inv_y / sum(inv_y)
+        # TODO: Fix assignments
+        inv_y = 1 / s[s != 0].values  # type: ignore[operator]
+        w = inv_y / sum(inv_y)  # type: ignore[operator,arg-type]
         idxs = np.argsort(w)
         sorted_w = w[idxs]
         sorted_w_cumsum = np.cumsum(sorted_w)
@@ -181,12 +207,6 @@ class RegressionPerformanceMetrics(Metric[RegressionPerformanceMetricsResults]):
 
         vals_for_plots: Dict[str, RegressionMetricScatter] = {}
 
-        if data.reference_data is not None:
-            is_ref_data = True
-
-        else:
-            is_ref_data = False
-
         for name, func in zip(
             ["r2_score", "rmse", "mean_abs_error", "mean_abs_perc_error"],
             [
@@ -201,14 +221,14 @@ class RegressionPerformanceMetrics(Metric[RegressionPerformanceMetricsResults]):
                 func,
                 data.column_mapping.target,
                 data.column_mapping.prediction,
-                is_ref_data,
+                data.reference_data is not None,
             )
 
         # me plot
         err_curr = data.current_data[data.column_mapping.prediction] - data.current_data[data.column_mapping.target]
         err_ref = None
 
-        if is_ref_data:
+        if data.reference_data is not None:
             err_ref = (
                 data.reference_data[data.column_mapping.prediction] - data.reference_data[data.column_mapping.target]
             )

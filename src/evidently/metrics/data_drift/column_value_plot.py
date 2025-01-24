@@ -10,6 +10,7 @@ from plotly import graph_objs as go
 from evidently.base_metric import InputData
 from evidently.base_metric import Metric
 from evidently.base_metric import MetricResult
+from evidently.base_metric import UsesRawDataMixin
 from evidently.core import IncludeTags
 from evidently.metric_results import ColumnAggScatter
 from evidently.metric_results import ColumnScatter
@@ -31,9 +32,11 @@ from evidently.utils.visualizations import prepare_df_for_time_index_plot
 
 class ColumnValuePlotResults(MetricResult):
     class Config:
+        type_alias = "evidently:metric_result:ColumnValuePlotResults"
         dict_include = False
         pd_include = False
         tags = {IncludeTags.Render}
+        field_tags = {"current": {IncludeTags.Current}, "reference": {IncludeTags.Reference}}
 
     column_name: str
     datetime_column_name: Optional[str]
@@ -45,7 +48,10 @@ class ColumnValuePlotResults(MetricResult):
     prefix: Optional[str] = None
 
 
-class ColumnValuePlot(Metric[ColumnValuePlotResults]):
+class ColumnValuePlot(UsesRawDataMixin, Metric[ColumnValuePlotResults]):
+    class Config:
+        type_alias = "evidently:metric:ColumnValuePlot"
+
     column_name: str
 
     def __init__(self, column_name: str, options: AnyOptions = None):

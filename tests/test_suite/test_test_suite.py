@@ -1,4 +1,5 @@
 import json
+from typing import Dict
 
 import numpy as np
 import pandas as pd
@@ -46,11 +47,17 @@ from evidently.tests.base_test import Test
 
 
 class ErrorTest(Test):
+    class Config:
+        alias_required = False
+
     name = "Error Test"
     group = "example"
 
     def check(self):
         raise ValueError("Test Exception")
+
+    def groups(self) -> Dict[str, str]:
+        return {}
 
 
 @pytest.fixture

@@ -22,6 +22,7 @@ Example:
     >>> from evidently.options.data_drift import DataDriftOptions
     >>> options = DataDriftOptions(all_features_stattest="fisher_exact")
 """
+
 from typing import Tuple
 
 import numpy as np
@@ -53,8 +54,8 @@ def _fisher_exact_stattest(
     """
 
     if (
-        (reference_data.isnull().values.any())
-        or (current_data.isnull().values.any())
+        (reference_data.isnull().to_numpy().any())
+        or (current_data.isnull().to_numpy().any())
         or (reference_data.isin([np.inf, -np.inf]).any())
         or (current_data.isin([np.inf, -np.inf]).any())
     ):

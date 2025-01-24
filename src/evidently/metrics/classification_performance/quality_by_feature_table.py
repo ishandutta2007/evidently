@@ -12,8 +12,10 @@ from plotly.subplots import make_subplots
 from evidently.base_metric import InputData
 from evidently.base_metric import Metric
 from evidently.base_metric import MetricResult
+from evidently.base_metric import UsesRawDataMixin
 from evidently.calculations.classification_performance import get_prediction_data
 from evidently.core import ColumnType
+from evidently.core import IncludeTags
 from evidently.features.generated_features import FeatureDescriptor
 from evidently.features.generated_features import GeneratedFeature
 from evidently.features.non_letter_character_percentage_feature import NonLetterCharacterPercentage
@@ -31,6 +33,15 @@ from evidently.utils.data_preprocessing import DataDefinition
 
 
 class ClassificationQualityByFeatureTableResults(MetricResult):
+    class Config:
+        type_alias = "evidently:metric_result:ClassificationQualityByFeatureTableResults"
+        field_tags = {
+            "current": {IncludeTags.Current},
+            "reference": {IncludeTags.Reference},
+            "target_name": {IncludeTags.Parameter},
+            "columns": {IncludeTags.Parameter},
+        }
+
     current: StatsByFeature
     reference: Optional[StatsByFeature]
 
@@ -38,7 +49,10 @@ class ClassificationQualityByFeatureTableResults(MetricResult):
     columns: List[str]
 
 
-class ClassificationQualityByFeatureTable(Metric[ClassificationQualityByFeatureTableResults]):
+class ClassificationQualityByFeatureTable(UsesRawDataMixin, Metric[ClassificationQualityByFeatureTableResults]):
+    class Config:
+        type_alias = "evidently:metric:ClassificationQualityByFeatureTable"
+
     columns: Optional[List[str]]
     descriptors: Optional[Dict[str, Dict[str, FeatureDescriptor]]]
     _text_features_gen: Optional[Dict[str, Dict[str, GeneratedFeature]]]
@@ -103,7 +117,7 @@ class ClassificationQualityByFeatureTable(Metric[ClassificationQualityByFeatureT
         curr_predictions = get_prediction_data(data.current_data, dataset_columns, data.column_mapping.pos_label)
         ref_predictions = None
         if ref_df is not None:
-            ref_predictions = get_prediction_data(data.reference_data, dataset_columns, data.column_mapping.pos_label)
+            ref_predictions = get_prediction_data(ref_df, dataset_columns, data.column_mapping.pos_label)
         if self.columns is None:
             columns = (
                 dataset_columns.num_feature_names
@@ -128,32 +142,32 @@ class ClassificationQualityByFeatureTable(Metric[ClassificationQualityByFeatureT
             for column, features in self._text_features_gen.items():
                 columns.remove(column)
                 columns += list(features.keys())
-                curr_text_df = pd.concat([data.get_current_column(x.feature_name()) for x in features.values()], axis=1)
-                curr_text_df.columns = list(features.keys())
+                curr_text_df = pd.concat([data.get_current_column(x.as_column()) for x in features.values()], axis=1)
+                curr_text_df.columns = pd.Index(list(features.keys()))
                 curr_df = pd.concat([curr_df.reset_index(drop=True), curr_text_df.reset_index(drop=True)], axis=1)
 
                 if ref_df is not None:
                     ref_text_df = pd.concat(
-                        [data.get_reference_column(x.feature_name()) for x in features.values()],
+                        [data.get_reference_column(x.as_column()) for x in features.values()],
                         axis=1,
                     )
-                    ref_text_df.columns = list(features.keys())
+                    ref_text_df.columns = pd.Index(list(features.keys()))
                     ref_df = pd.concat([ref_df.reset_index(drop=True), ref_text_df.reset_index(drop=True)], axis=1)
 
-        table_columns = columns + [target_name]
+        table_columns = set(columns + [target_name])
         if isinstance(prediction_name, str):
-            table_columns += [prediction_name]
+            table_columns.add(prediction_name)
         if isinstance(prediction_name, list):
-            table_columns += prediction_name
+            table_columns = table_columns.union(set(prediction_name))
         reference = None
         if ref_df is not None:
             reference = StatsByFeature(
-                plot_data=ref_df[table_columns],
+                plot_data=ref_df[list(table_columns)],
                 predictions=ref_predictions,
             )
         return ClassificationQualityByFeatureTableResults(
             current=StatsByFeature(
-                plot_data=curr_df[table_columns],
+                plot_data=curr_df[list(table_columns)],
                 predictions=curr_predictions,
             ),
             reference=reference,
@@ -237,7 +251,7 @@ class ClassificationQualityByFeatureTableRenderer(MetricRenderer):
 
             # Probas plots
             if curr_predictions.prediction_probas is not None:
-                ref_columns = columns + ["prediction_labels", target_name]
+                ref_columns = list(set(columns + ["prediction_labels", target_name]))
                 current_data = pd.concat(
                     [current_data[ref_columns], curr_predictions.prediction_probas],
                     axis=1,

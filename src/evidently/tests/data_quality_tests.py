@@ -45,11 +45,11 @@ from evidently.tests.base_test import TestParameters
 from evidently.tests.base_test import TestResult
 from evidently.tests.base_test import TestStatus
 from evidently.tests.base_test import TestValueCondition
-from evidently.tests.base_test import ValueSource
 from evidently.tests.utils import approx
 from evidently.tests.utils import plot_correlations
 from evidently.tests.utils import plot_value_counts_tables
 from evidently.tests.utils import plot_value_counts_tables_ref_curr
+from evidently.utils.data_preprocessing import ColumnDefinition
 from evidently.utils.data_preprocessing import DataDefinition
 from evidently.utils.generators import BaseGenerator
 from evidently.utils.types import Numeric
@@ -94,6 +94,9 @@ class BaseDataQualityMetricsValueTest(ConditionFromReferenceMixin[ColumnCharacte
 
 
 class TestConflictTarget(Test):
+    class Config:
+        type_alias = "evidently:test:TestConflictTarget"
+
     group: ClassVar = DATA_QUALITY_GROUP.id
     name: ClassVar = "Test number of conflicts in target"
     _metric: ConflictTargetMetric
@@ -123,8 +126,14 @@ class TestConflictTarget(Test):
 
         return TestResult(name=self.name, description=description, status=test_result, group=self.group)
 
+    def groups(self) -> Dict[str, str]:
+        return {}
+
 
 class TestConflictPrediction(Test):
+    class Config:
+        type_alias = "evidently:test:TestConflictPrediction"
+
     group: ClassVar = DATA_QUALITY_GROUP.id
     name: ClassVar = "Test number of conflicts in prediction"
     _metric: ConflictPredictionMetric
@@ -153,6 +162,9 @@ class TestConflictPrediction(Test):
             description = "Prediction is stable"
 
         return TestResult(name=self.name, description=description, status=test_result, group=self.group)
+
+    def groups(self) -> Dict[str, str]:
+        return {}
 
 
 class BaseDataQualityCorrelationsMetricsValueTest(ConditionFromReferenceMixin[DatasetCorrelation], ABC):
@@ -189,6 +201,9 @@ class BaseDataQualityCorrelationsMetricsValueTest(ConditionFromReferenceMixin[Da
 
 
 class TestTargetPredictionCorrelation(BaseDataQualityCorrelationsMetricsValueTest):
+    class Config:
+        type_alias = "evidently:test:TestTargetPredictionCorrelation"
+
     name: ClassVar = "Correlation between Target and Prediction"
 
     def get_condition_from_reference(self, reference: Optional[DatasetCorrelation]) -> TestValueCondition:
@@ -197,7 +212,7 @@ class TestTargetPredictionCorrelation(BaseDataQualityCorrelationsMetricsValueTes
             value = reference.stats[method].target_prediction_correlation
 
             if value is not None:
-                return TestValueCondition(eq=approx(value, absolute=0.25), source=ValueSource.REFERENCE)
+                return TestValueCondition(eq=approx(value, absolute=0.25))
 
         return TestValueCondition(gt=0)
 
@@ -215,6 +230,9 @@ class TestTargetPredictionCorrelation(BaseDataQualityCorrelationsMetricsValueTes
 
 
 class TestHighlyCorrelatedColumns(BaseDataQualityCorrelationsMetricsValueTest):
+    class Config:
+        type_alias = "evidently:test:TestHighlyCorrelatedColumns"
+
     name: ClassVar = "Highly Correlated Columns"
 
     def get_condition_from_reference(self, reference: Optional[DatasetCorrelation]) -> TestValueCondition:
@@ -222,7 +240,7 @@ class TestHighlyCorrelatedColumns(BaseDataQualityCorrelationsMetricsValueTest):
             value = reference.stats[get_corr_method(self.method)].abs_max_features_correlation
 
             if value is not None:
-                return TestValueCondition(eq=approx(value, relative=0.1), source=ValueSource.REFERENCE)
+                return TestValueCondition(eq=approx(value, relative=0.1))
 
         return TestValueCondition(lt=0.9)
 
@@ -253,6 +271,9 @@ class TestHighlyCorrelatedColumnsRenderer(TestRenderer):
 
 
 class TestTargetFeaturesCorrelations(BaseDataQualityCorrelationsMetricsValueTest):
+    class Config:
+        type_alias = "evidently:test:TestTargetFeaturesCorrelations"
+
     name: ClassVar = "Correlation between Target and Features"
 
     def get_condition_from_reference(self, reference: Optional[DatasetCorrelation]) -> TestValueCondition:
@@ -261,7 +282,7 @@ class TestTargetFeaturesCorrelations(BaseDataQualityCorrelationsMetricsValueTest
             value = reference.stats[method].abs_max_target_features_correlation
 
             if value is not None:
-                return TestValueCondition(eq=approx(value, relative=0.1), source=ValueSource.REFERENCE)
+                return TestValueCondition(eq=approx(value, relative=0.1))
 
         return TestValueCondition(lt=0.9)
 
@@ -278,6 +299,9 @@ class TestTargetFeaturesCorrelations(BaseDataQualityCorrelationsMetricsValueTest
 
 
 class TestPredictionFeaturesCorrelations(BaseDataQualityCorrelationsMetricsValueTest):
+    class Config:
+        type_alias = "evidently:test:TestPredictionFeaturesCorrelations"
+
     name: ClassVar = "Correlation between Prediction and Features"
 
     def get_condition_from_reference(self, reference: Optional[DatasetCorrelation]) -> TestValueCondition:
@@ -323,6 +347,9 @@ class TestPredictionFeaturesCorrelationsRenderer(TestRenderer):
 
 
 class TestCorrelationChanges(BaseDataQualityCorrelationsMetricsValueTest):
+    class Config:
+        type_alias = "evidently:test:TestCorrelationChanges"
+
     group: ClassVar = DATA_QUALITY_GROUP.id
     name: ClassVar = "Change in Correlation"
     _metric: DatasetCorrelationsMetric
@@ -361,7 +388,7 @@ class TestCorrelationChanges(BaseDataQualityCorrelationsMetricsValueTest):
         )
 
     def get_condition_from_reference(self, reference: Optional[DatasetCorrelation]) -> TestValueCondition:
-        pass
+        raise NotImplementedError()
 
     def get_condition(self) -> TestValueCondition:
         if self.condition.has_condition():
@@ -384,9 +411,10 @@ class TestCorrelationChanges(BaseDataQualityCorrelationsMetricsValueTest):
             return (diff.abs() > self.corr_diff).sum().sum() / 2
 
         current_correlations = current_correlations[self.column_name.display_name]
-        if reference_correlations is not None:
-            reference_correlations = reference_correlations[self.column_name.display_name]
-        diff = reference_correlations - current_correlations
+        if reference_correlations is None:
+            raise ValueError("Reference is required for test")
+        reference_correlations_data = reference_correlations[self.column_name.display_name]
+        diff = reference_correlations_data - current_correlations
         return (diff.abs() > self.corr_diff).sum()
 
     def get_description(self, value: Numeric) -> str:
@@ -460,6 +488,9 @@ class BaseFeatureDataQualityMetricsTest(BaseDataQualityMetricsValueTest, ABC):
 
 
 class TestColumnValueMin(BaseFeatureDataQualityMetricsTest):
+    class Config:
+        type_alias = "evidently:test:TestColumnValueMin"
+
     name: ClassVar = "Min Value"
 
     def get_stat(self, current: NumericCharacteristics):
@@ -485,6 +516,9 @@ class TestColumnValueMin(BaseFeatureDataQualityMetricsTest):
 
 
 class TestColumnValueMax(BaseFeatureDataQualityMetricsTest):
+    class Config:
+        type_alias = "evidently:test:TestColumnValueMax"
+
     name: ClassVar = "Max Value"
 
     def get_stat(self, current: NumericCharacteristics):
@@ -512,6 +546,9 @@ class TestColumnValueMax(BaseFeatureDataQualityMetricsTest):
 
 
 class TestColumnValueMean(BaseFeatureDataQualityMetricsTest):
+    class Config:
+        type_alias = "evidently:test:TestColumnValueMean"
+
     name: ClassVar = "Mean Value"
 
     def get_stat(self, current: NumericCharacteristics):
@@ -535,6 +572,9 @@ class TestColumnValueMean(BaseFeatureDataQualityMetricsTest):
 
 
 class TestColumnValueMedian(BaseFeatureDataQualityMetricsTest):
+    class Config:
+        type_alias = "evidently:test:TestColumnValueMedian"
+
     name: ClassVar = "Median Value"
 
     def get_stat(self, current: NumericCharacteristics):
@@ -590,7 +630,7 @@ class TestColumnValueFeatureRenderer(TestRenderer):
         info.with_details(f"{obj.name} {column_name}", plotly_figure(title="", figure=fig))
         return info
 
-    def _feature_render_html(self, obj):
+    def _feature_render_html(self, obj: BaseFeatureDataQualityMetricsTest):
         column_name = obj.column_name
         info = super().render_html(obj)
         metric_result: ColumnSummaryResult = obj.metric.get_result()
@@ -605,6 +645,9 @@ class TestColumnValueFeatureRenderer(TestRenderer):
 
 
 class TestColumnValueStd(BaseFeatureDataQualityMetricsTest):
+    class Config:
+        type_alias = "evidently:test:TestColumnValueStd"
+
     name: ClassVar = "Standard Deviation (SD)"
 
     def get_stat(self, current: NumericCharacteristics):
@@ -649,6 +692,9 @@ class TestColumnValueStdRenderer(TestColumnValueFeatureRenderer):
 
 
 class TestNumberOfUniqueValues(BaseFeatureDataQualityMetricsTest):
+    class Config:
+        type_alias = "evidently:test:TestNumberOfUniqueValues"
+
     name: ClassVar = "Number of Unique Values"
 
     def get_stat(self, current: NumericCharacteristics):
@@ -693,6 +739,9 @@ class TestNumberOfUniqueValuesRenderer(TestRenderer):
 
 
 class TestUniqueValuesShare(BaseFeatureDataQualityMetricsTest):
+    class Config:
+        type_alias = "evidently:test:TestUniqueValuesShare"
+
     name: ClassVar = "Share of Unique Values"
 
     def get_stat(self, current: NumericCharacteristics):
@@ -744,6 +793,9 @@ class TestUniqueValuesShareRenderer(TestRenderer):
 
 
 class TestMostCommonValueShare(BaseFeatureDataQualityMetricsTest):
+    class Config:
+        type_alias = "evidently:test:TestMostCommonValueShare"
+
     name: ClassVar = "Share of the Most Common Value"
 
     def get_stat(self, current: NumericCharacteristics):
@@ -836,6 +888,9 @@ class TestAllColumnsMostCommonValueShare(BaseGenerator):
 
 
 class MeanInNSigmasParameter(TestParameters):
+    class Config:
+        type_alias = "evidently:test_parameters:MeanInNSigmasParameter"
+
     column_name: str
     current_mean: float
     n_sigmas: int  # ? float
@@ -844,6 +899,8 @@ class MeanInNSigmasParameter(TestParameters):
 
 
 class TestMeanInNSigmas(Test):
+    class Config:
+        type_alias = "evidently:test:TestMeanInNSigmas"
 
     group: ClassVar = DATA_QUALITY_GROUP.id
     name: ClassVar = "Mean Value Stability"
@@ -910,10 +967,12 @@ class TestMeanInNSigmas(Test):
             name=self.name,
             description=description,
             status=test_result,
-            groups={GroupingTypes.ByFeature.id: self.column_name.display_name},
             parameters=parameters,
             group=self.group,
         )
+
+    def groups(self) -> Dict[str, str]:
+        return {GroupingTypes.ByFeature.id: self.column_name.display_name}
 
 
 @default_renderer(wrap_type=TestMeanInNSigmas)
@@ -994,6 +1053,9 @@ class TestNumColumnsMeanInNSigmas(BaseGenerator):
 
 
 class TestValueRange(Test):
+    class Config:
+        type_alias = "evidently:test:TestValueRange"
+
     group: ClassVar = DATA_QUALITY_GROUP.id
     name: ClassVar = "Value Range"
     _metric: ColumnValueRangeMetric
@@ -1032,9 +1094,11 @@ class TestValueRange(Test):
             name=self.name,
             description=description,
             status=test_result,
-            groups={GroupingTypes.ByFeature.id: self.column_name.display_name},
             group=self.group,
         )
+
+    def groups(self) -> Dict[str, str]:
+        return {GroupingTypes.ByFeature.id: self.column_name.display_name}
 
 
 @default_renderer(wrap_type=TestValueRange)
@@ -1120,6 +1184,9 @@ class BaseDataQualityValueRangeMetricsTest(BaseCheckValueTest, ABC):
 
 
 class TestNumberOfOutRangeValues(BaseDataQualityValueRangeMetricsTest):
+    class Config:
+        type_alias = "evidently:test:TestNumberOfOutRangeValues"
+
     name: ClassVar = "Number of Out-of-Range Values "
 
     def calculate_value_for_test(self) -> Numeric:
@@ -1133,11 +1200,17 @@ class TestNumberOfOutRangeValues(BaseDataQualityValueRangeMetricsTest):
 
 
 class ShareOfOutRangeParameters(CheckValueParameters):
+    class Config:
+        type_alias = "evidently:test_parameters:ShareOfOutRangeParameters"
+
     left: Optional[float]
     right: Optional[float]
 
 
 class TestShareOfOutRangeValues(BaseDataQualityValueRangeMetricsTest):
+    class Config:
+        type_alias = "evidently:test:TestShareOfOutRangeValues"
+
     name: ClassVar = "Share of Out-of-Range Values"
 
     def calculate_value_for_test(self) -> Numeric:
@@ -1219,12 +1292,18 @@ class TestNumColumnsOutOfRangeValues(BaseGenerator):
 
 
 class ColumnValueListParameters(TestParameters):
+    class Config:
+        type_alias = "evidently:test_parameters:ColumnValueListParameters"
+
     value: Numeric
     column_name: str
     values: Optional[List[Any]] = None
 
 
 class TestValueList(Test):
+    class Config:
+        type_alias = "evidently:test:TestValueList"
+
     group: ClassVar = DATA_QUALITY_GROUP.id
     name: ClassVar = "Out-of-List Values"
     alias: ClassVar = "value_list"
@@ -1257,12 +1336,14 @@ class TestValueList(Test):
             name=self.name,
             description=description,
             status=test_result,
-            groups={GroupingTypes.ByFeature.id: self.column_name},
             group=self.group,
             parameters=ColumnValueListParameters(
                 value=metric_result.current.number_not_in_list, values=self.values, column_name=self.column_name
             ),
         )
+
+    def groups(self) -> Dict[str, str]:
+        return {GroupingTypes.ByFeature.id: self.column_name}
 
 
 class BaseDataQualityValueListMetricsTest(BaseCheckValueTest, ABC):
@@ -1315,6 +1396,9 @@ class BaseDataQualityValueListMetricsTest(BaseCheckValueTest, ABC):
 
 
 class TestNumberOfOutListValues(BaseDataQualityValueListMetricsTest):
+    class Config:
+        type_alias = "evidently:test:TestNumberOfOutListValues"
+
     name: ClassVar = "Number Out-of-List Values"
     alias: ClassVar = "number_value_list"
 
@@ -1330,10 +1414,16 @@ class TestNumberOfOutListValues(BaseDataQualityValueListMetricsTest):
 
 class ValueListParameters(CheckValueParameters):
     # todo: typing
+    class Config:
+        type_alias = "evidently:test_parameters:ValueListParameters"
+
     values: Optional[List[Any]] = None
 
 
 class TestShareOfOutListValues(BaseDataQualityValueListMetricsTest):
+    class Config:
+        type_alias = "evidently:test:TestShareOfOutListValues"
+
     name: ClassVar = "Share of Out-of-List Values"
     alias: ClassVar = "share_value_list"
 
@@ -1361,18 +1451,15 @@ class TestCatColumnsOutOfListValues(BaseGenerator):
 
     def __init__(self, columns: Optional[List[str]] = None, is_critical: bool = True):
         self.is_critical = is_critical
-        self.columns = columns
+        self.columns: Optional[List[str]] = columns
 
     def generate(self, data_definition: DataDefinition) -> List[TestShareOfOutListValues]:
+        columns: List[ColumnDefinition]
         if self.columns is None:
             columns = data_definition.get_columns(ColumnType.Categorical, features_only=True)
-
         else:
-            columns = [
-                column
-                for column in self.columns
-                if data_definition.get_column(column).column_type == ColumnType.Categorical
-            ]
+            columns = [data_definition.get_column(column) for column in self.columns]
+            columns = [c for c in columns if c.column_type == ColumnType.Categorical]
         return [
             TestShareOfOutListValues(
                 column_name=column.column_name,
@@ -1383,6 +1470,9 @@ class TestCatColumnsOutOfListValues(BaseGenerator):
 
 
 class TestColumnQuantile(BaseCheckValueTest):
+    class Config:
+        type_alias = "evidently:test:TestColumnQuantile"
+
     group: ClassVar = DATA_QUALITY_GROUP.id
     name: ClassVar = "Quantile Value"
     _metric: ColumnQuantileMetric
@@ -1432,7 +1522,7 @@ class TestColumnQuantile(BaseCheckValueTest):
         reference = self.metric.get_result().reference
 
         if reference is not None:
-            return TestValueCondition(eq=approx(reference.value, 0.1), source=ValueSource.REFERENCE)
+            return TestValueCondition(eq=approx(reference.value, 0.1))
 
         raise ValueError("Neither required test parameters nor reference data has been provided.")
 
@@ -1482,16 +1572,16 @@ class TestListValuesRenderer(TestRenderer):
         values = metric_result.values
         curr_df = pd.concat(
             [
-                pd.DataFrame(metric_result.current.values_in_list.items(), columns=["x", "count"]),
-                pd.DataFrame(metric_result.current.values_not_in_list.items(), columns=["x", "count"]),
+                pd.DataFrame(metric_result.current.values_in_list, columns=["x", "count"]),
+                pd.DataFrame(metric_result.current.values_not_in_list, columns=["x", "count"]),
             ]
         )
 
         if metric_result.reference is not None:
             ref_df = pd.concat(
                 [
-                    pd.DataFrame(metric_result.reference.values_in_list.items(), columns=["x", "count"]),
-                    pd.DataFrame(metric_result.reference.values_in_list.items(), columns=["x", "count"]),
+                    pd.DataFrame(metric_result.reference.values_in_list, columns=["x", "count"]),
+                    pd.DataFrame(metric_result.reference.values_in_list, columns=["x", "count"]),
                 ]
             )
 
@@ -1556,12 +1646,15 @@ class BaseDataQualityCategoryMetricsTest(BaseCheckValueTest, ABC):
         reference = self.metric.get_result().reference
         reference_value = self.get_condition_from_reference(reference)
         if reference is not None:
-            return TestValueCondition(eq=approx(reference_value, 0.1), source=ValueSource.REFERENCE)
+            return TestValueCondition(eq=approx(reference_value, 0.1))
 
         return TestValueCondition(gt=0)
 
 
 class TestCategoryShare(BaseDataQualityCategoryMetricsTest):
+    class Config:
+        type_alias = "evidently:test:TestCategoryShare"
+
     name: ClassVar = "Share of category"
     alias: ClassVar = "share_category"
 
@@ -1576,7 +1669,7 @@ class TestCategoryShare(BaseDataQualityCategoryMetricsTest):
     def get_description(self, value: Numeric) -> str:
         metric_result = self.metric.get_result()
         return (
-            f"The share of category '{metric_result.category}' in the column **{self.column_name.display_name}** is {value:.3g} "
+            f"The share of category '{str(metric_result.category)}' in the column **{self.column_name.display_name}** is {value:.3g} "
             f"({metric_result.current.category_num} out of {metric_result.current.all_num}). "
             f"The test threshold is {self.get_condition()}."
         )
@@ -1586,6 +1679,9 @@ class TestCategoryShare(BaseDataQualityCategoryMetricsTest):
 
 
 class TestCategoryCount(BaseDataQualityCategoryMetricsTest):
+    class Config:
+        type_alias = "evidently:test:TestCategoryCount"
+
     name: ClassVar = "Count of category"
     alias: ClassVar = "count_category"
 
@@ -1613,7 +1709,7 @@ class TestCategoryCount(BaseDataQualityCategoryMetricsTest):
 @default_renderer(wrap_type=TestCategoryShare)
 class TestCategoryRenderer(TestRenderer):
     @staticmethod
-    def _get_number_and_percents(s: pd.Series, num: int) -> pd.DataFrame:
+    def _get_number_and_percents(s: pd.Series, num: int) -> pd.Series:
         """Get a string with missing values numbers and percents from info for results table"""
         return s.astype(str) + " (" + (s / num * 100).round(2).astype(str) + "%)"
 
@@ -1626,14 +1722,13 @@ class TestCategoryRenderer(TestRenderer):
         n_ref: Optional[int],
         name: str,
     ) -> TestHtmlInfo:
-
         curr_df = curr_df.copy()
         replace = [("current value counts", n_curr)]
         if ref_df is not None and n_ref is not None:
             ref_df = ref_df.copy()
             replace.append(("reference value counts", n_ref))
             df = curr_df.merge(ref_df, on="x", how="outer")
-            df.columns = ["value", "current value counts", "reference value counts"]
+            df.columns = pd.Index(["value", "current value counts", "reference value counts"])
             df[["current value counts", "reference value counts"]] = df[
                 ["current value counts", "reference value counts"]
             ].fillna(0.0)
@@ -1641,11 +1736,11 @@ class TestCategoryRenderer(TestRenderer):
 
         else:
             df = curr_df
-            df.columns = ["value", "current value counts"]
+            df.columns = pd.Index(["value", "current value counts"])
             df.sort_values("current value counts", ascending=False, inplace=True)
         for col, n in replace:
             df[col] = self._get_number_and_percents(df[col].fillna(0), n)
-
+        df["value"] = df["value"].astype(str)
         info.details = [
             DetailsInfo(
                 id=name,

@@ -5,13 +5,15 @@
 # Distributed under the terms of the Modified BSD License.
 import os
 from os.path import join as pjoin
+from pathlib import Path
+
+from setuptools import setup
 
 from setupbase import HERE
 from setupbase import combine_commands
 from setupbase import create_cmdclass
 from setupbase import ensure_targets
 from setupbase import install_npm
-from setuptools import setup
 
 nb_path = pjoin(HERE, "src", "evidently", "nbextension", "static")
 
@@ -24,10 +26,10 @@ package_data_spec = {
     "evidently": [
         "nbextension/static/*.*js*",
         "nbextension/static/*.*woff2*",
-        "ui/ui/*",
-        "ui/ui/static/css/*",
-        "ui/ui/static/js/*",
-        "ui/ui/static/img/*",
+        "ui/assets/*",
+        "ui/assets/static/css/*",
+        "ui/assets/static/js/*",
+        "ui/assets/static/img/*",
     ]
 }
 
@@ -42,57 +44,78 @@ cmdclass["jsdeps"] = combine_commands(
     install_npm(os.path.join(HERE, "ui"), build_cmd="build"),
     ensure_targets(jstargets),
 )
-
 setup_args = dict(
     cmdclass=cmdclass,
     author_email="emeli.dral@gmail.com",
+    long_description=(Path(__file__).parent / "README.md").read_text("utf8"),
+    long_description_content_type="text/markdown",
     include_package_data=True,
     install_requires=[
-        "plotly>=5.5.0",
+        "plotly>=5.10.0",
         "statsmodels>=0.12.2",
-        "scikit-learn>=0.24.0",
-        "pandas>=1.3.5",
-        "numpy>=1.19.5",
+        "scikit-learn>=1.0.1,<1.6.0",
+        "pandas[parquet]>=1.3.5",
+        "numpy>=1.22.0,<2.1",
         "nltk>=3.6.7",
-        "scipy>=1.5.4",
-        "requests>=2.21.0",
-        "PyYAML>=5.1",
-        "pydantic<2",
-        "fastapi>=0.100.0",
-        "fastapi-restful>=0.5.0",
+        "scipy>=1.10.0",
+        "requests>=2.32.0",
+        "PyYAML>=5.4",
+        "pydantic>=1.10.13",
+        "litestar>=2.8.3",
         "typing-inspect>=0.9.0",
-        "uvicorn>=0.22.0",
-        "watchdog>=3",
+        "uvicorn[standard]>=0.22.0",
+        "watchdog>=3.0.0",
         "typer>=0.3",
         "rich>=13",
         "iterative-telemetry>=0.0.5",
-        "pyarrow<11.0dev"
+        "dynaconf>=3.2.4",
+        "certifi>=2024.7.4",
+        "urllib3>=1.26.19",
+        "fsspec>=2024.6.1",
+        "ujson>=5.4.0",
+        "deprecation>=2.1.0",
+        "uuid6>=2024.7.10",
+        "cryptography>=43.0.1",
     ],
     extras_require={
         "dev": [
-            "wheel==0.35.1",
-            "setuptools==50.3.2",
-            "flake8==4.0.1",
+            "pip-audit>=2.7.2",
+            "wheel==0.38.1",
+            "setuptools==65.5.1; python_version < '3.12'",
+            "setuptools==68.2.2; python_version >= '3.12'",
             "jupyter==1.0.0",
-            "mypy==0.910",
-            "pytest==6.2.5",
+            "mypy==1.1.1",
+            "pandas-stubs>=1.3.5",
+            "pytest==7.4.4",
             "types-PyYAML==6.0.1",
             "types-requests==2.26.0",
             "types-dataclasses==0.6",
             "types-python-dateutil==2.8.19",
-            "pillow==9.5.0",
-            "black==22.8.0",
-            "isort==5.10.1",
-            "httpx==0.24.1"
+            "types-ujson>=5.4.0",
+            "pillow==10.3.0",
+            "httpx==0.27.0",
+            "ruff==0.3.7",
+            "pre-commit==3.5.0",
+            "pytest-asyncio==0.23.7",
         ],
-        "spark": [
-            "pyspark"
-        ]
+        "llm": [
+            "openai>=1.16.2",
+            "evaluate>=0.4.1",
+            "transformers[torch]>=4.39.3",
+            "sentence-transformers>=2.7.0",
+            "sqlvalidator>=0.0.20",
+            "chromadb>=0.4.0",
+        ],
+        "spark": ["pyspark>=3.4.0"],
+        "fsspec": [
+            "s3fs>=2024.9.0",
+            "gcsfs>=2024.9.0",
+            # dependencies from fsspec[full]
+        ],
     },
-    entry_points={
-        "console_scripts": ["evidently=evidently.cli:app"]
-    },
+    entry_points={"console_scripts": ["evidently=evidently.cli:app"]},
 )
+
 
 if __name__ == "__main__":
     setup(**setup_args)

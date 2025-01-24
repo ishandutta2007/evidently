@@ -2,6 +2,7 @@ from typing import Dict
 from typing import List
 from typing import Optional
 from typing import Sequence
+from typing import Set
 from typing import Tuple
 from typing import Type
 from typing import TypeVar
@@ -21,7 +22,13 @@ from evidently.pipeline.column_mapping import TargetNames
 
 Label = Union[int, str]
 
-List.__getitem__.__closure__[0].cell_contents.cache_clear()  # type: ignore[attr-defined]
+try:
+    List.__getitem__.__closure__[0].cell_contents.cache_clear()  # type: ignore
+except AttributeError:  # since python 3.12
+    from typing import _caches  # type: ignore[attr-defined]
+
+    _caches[List.__getitem__.__wrapped__].cache_clear()  # type: ignore[attr-defined]
+
 LabelList = List[Label]
 
 
@@ -67,10 +74,11 @@ def column_scatter_valudator(value):
 
 class Distribution(MetricResult):
     class Config:
-        dict_include = False
+        type_alias = "evidently:metric_result:Distribution"
         pd_include = False
         tags = {IncludeTags.Render}
         smart_union = True
+        extract_as_obj = True
 
     x: Union[np.ndarray, list, pd.Categorical, pd.Series]
     y: Union[np.ndarray, list, pd.Categorical, pd.Series]
@@ -78,7 +86,10 @@ class Distribution(MetricResult):
 
 class ConfusionMatrix(MetricResult):
     class Config:
+        type_alias = "evidently:metric_result:ConfusionMatrix"
         smart_union = True
+
+        field_tags = {"labels": {IncludeTags.Parameter}}
 
     labels: Sequence[Label]
     values: list  # todo better typing
@@ -86,6 +97,7 @@ class ConfusionMatrix(MetricResult):
 
 class PredictionData(MetricResult):
     class Config:
+        type_alias = "evidently:metric_result:PredictionData"
         dict_include = False
 
     predictions: pd.Series
@@ -114,6 +126,7 @@ class PredictionData(MetricResult):
 
 class StatsByFeature(MetricResult):
     class Config:
+        type_alias = "evidently:metric_result:StatsByFeature"
         dict_include = False
         pd_include = False
         tags = {IncludeTags.Render}
@@ -123,6 +136,9 @@ class StatsByFeature(MetricResult):
 
 
 class DatasetUtilityColumns(MetricResult):
+    class Config:
+        type_alias = "evidently:metric_result:DatasetUtilityColumns"
+
     date: Optional[str]
     id: Optional[str]
     target: Optional[str]
@@ -131,7 +147,10 @@ class DatasetUtilityColumns(MetricResult):
 
 class DatasetColumns(MetricResult):
     class Config:
+        type_alias = "evidently:metric_result:DatasetColumns"
         dict_exclude_fields = {"task", "target_type"}
+        pd_include = False
+        tags = {IncludeTags.Parameter}
 
     utility_columns: DatasetUtilityColumns
     target_type: Optional[str]
@@ -217,14 +236,15 @@ def df_from_column_scatter(value: ColumnScatter) -> pd.DataFrame:
 def column_scatter_from_df(df: Optional[pd.DataFrame], with_index: bool) -> Optional[ColumnScatter]:
     if df is None:
         return None
-    data = {column: df[column] for column in df.columns}
+    data: ColumnScatter = {column: df[column] for column in df.columns}
     if with_index:
-        data["index"] = df.index
+        data["index"] = df.index.to_series()
     return data
 
 
 class ScatterAggField(MetricResult):
     class Config:
+        type_alias = "evidently:metric_result:ScatterAggField"
         smart_union = True
         dict_include = False
         pd_include = False
@@ -238,6 +258,7 @@ class ScatterAggField(MetricResult):
 
 class ScatterField(MetricResult):
     class Config:
+        type_alias = "evidently:metric_result:ScatterField"
         smart_union = True
         dict_include = False
         pd_include = False
@@ -251,10 +272,13 @@ class ScatterField(MetricResult):
 
 class ColumnScatterResult(MetricResult):
     class Config:
+        type_alias = "evidently:metric_result:ColumnScatterResult"
         smart_union = True
         dict_include = False
+        pd_include = False
 
         tags = {IncludeTags.Render}
+        field_tags = {"current": {IncludeTags.Current}, "reference": {IncludeTags.Reference}}
 
     current: ColumnScatter
     reference: Optional[ColumnScatter]
@@ -263,8 +287,13 @@ class ColumnScatterResult(MetricResult):
 
 
 class ColumnAggScatterResult(ColumnScatterResult):
-    current: ColumnAggScatter
-    reference: Optional[ColumnAggScatter]
+    class Config:
+        type_alias = "evidently:metric_result:ColumnAggScatterResult"
+        field_tags = {"current": {IncludeTags.Current}, "reference": {IncludeTags.Reference}}
+
+    # TODO: fix type collision with super type
+    current: ColumnAggScatter  # type: ignore[assignment]
+    reference: Optional[ColumnAggScatter]  # type: ignore[assignment]
 
 
 PlotData = List[float]
@@ -272,6 +301,7 @@ PlotData = List[float]
 
 class Boxes(MetricResult):
     class Config:
+        type_alias = "evidently:metric_result:Boxes"
         dict_include = False
         tags = {IncludeTags.Render}
 
@@ -284,6 +314,7 @@ class Boxes(MetricResult):
 
 class RatesPlotData(MetricResult):
     class Config:
+        type_alias = "evidently:metric_result:RatesPlotData"
         dict_include = False
         tags = {IncludeTags.Render}
 
@@ -296,6 +327,7 @@ class RatesPlotData(MetricResult):
 
 class PRCurveData(MetricResult):
     class Config:
+        type_alias = "evidently:metric_result:PRCurveData"
         dict_include = False
         tags = {IncludeTags.Render}
 
@@ -309,6 +341,7 @@ PRCurve = Dict[Label, PRCurveData]
 
 class ROCCurveData(MetricResult):
     class Config:
+        type_alias = "evidently:metric_result:ROCCurveData"
         dict_include = False
         tags = {IncludeTags.Render}
 
@@ -320,10 +353,35 @@ class ROCCurveData(MetricResult):
 ROCCurve = Dict[Label, ROCCurveData]
 
 
-class HistogramData(MetricResult):
+class LiftCurveData(MetricResult):
     class Config:
+        type_alias = "evidently:metric_result:LiftCurveData"
         dict_include = False
         tags = {IncludeTags.Render}
+
+    lift: PlotData
+    top: PlotData
+    count: PlotData
+    prob: PlotData
+    tp: PlotData
+    fp: PlotData
+    precision: PlotData
+    recall: PlotData
+    f1_score: PlotData
+    max_lift: PlotData
+    relative_lift: PlotData
+    percent: PlotData
+
+
+LiftCurve = Dict[Label, LiftCurveData]
+
+
+class HistogramData(MetricResult):
+    class Config:
+        type_alias = "evidently:metric_result:HistogramData"
+        dict_include = False
+        tags = {IncludeTags.Render}
+        extract_as_obj = True
 
     x: pd.Series
     count: pd.Series
@@ -345,8 +403,15 @@ class HistogramData(MetricResult):
 
 class Histogram(MetricResult):
     class Config:
+        type_alias = "evidently:metric_result:Histogram"
         dict_include = False
         tags = {IncludeTags.Render}
+        field_tags = {
+            "current": {IncludeTags.Current},
+            "reference": {IncludeTags.Reference},
+            "current_log": {IncludeTags.Current},
+            "reference_log": {IncludeTags.Reference},
+        }
 
     current: HistogramData
     reference: Optional[HistogramData]
@@ -358,16 +423,34 @@ class Histogram(MetricResult):
 # todo need better config overriding logic in metricresult
 class DistributionIncluded(Distribution):
     class Config:
+        type_alias = "evidently:metric_result:DistributionIncluded"
+        tags: Set[IncludeTags] = set()
         dict_include = True
+        field_tags = {"x": {IncludeTags.Extra}}
 
 
 class ColumnCorrelations(MetricResult):
+    class Config:
+        type_alias = "evidently:metric_result:ColumnCorrelations"
+        field_tags = {"column_name": {IncludeTags.Parameter}, "kind": {IncludeTags.Parameter}}
+
     column_name: str
     kind: str
     values: DistributionIncluded
 
+    def get_pandas(self) -> pd.DataFrame:
+        return pd.DataFrame(
+            [
+                {"kind": self.kind, "column_name": key, "value": value}
+                for key, value in zip(self.values.x, self.values.y)
+            ]
+        )
+
 
 class DatasetClassificationQuality(MetricResult):
+    class Config:
+        type_alias = "evidently:metric_result:DatasetClassificationQuality"
+
     accuracy: float
     precision: float
     recall: float
@@ -387,15 +470,15 @@ TA = TypeVar("TA")
 
 
 @overload
-def raw_agg_properties(field_name, raw_type: Type[TR], agg_type: Type[TA], optional: Literal[False]) -> Tuple[TR, TA]:
-    ...
+def raw_agg_properties(
+    field_name, raw_type: Type[TR], agg_type: Type[TA], optional: Literal[False]
+) -> Tuple[TR, TA]: ...
 
 
 @overload
 def raw_agg_properties(
     field_name, raw_type: Type[TR], agg_type: Type[TA], optional: Literal[True]
-) -> Tuple[Optional[TR], Optional[TA]]:
-    ...
+) -> Tuple[Optional[TR], Optional[TA]]: ...
 
 
 def raw_agg_properties(field_name, raw_type: Type[TR], agg_type: Type[TA], optional: bool) -> Tuple[TR, TA]:
