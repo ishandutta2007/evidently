@@ -1,6 +1,9 @@
+from typing import Any
+from typing import Dict
 from typing import List
 from typing import Optional
 
+from evidently.metric_preset.metric_preset import AnyMetric
 from evidently.metric_preset.metric_preset import MetricPreset
 from evidently.metrics import ClassificationClassBalance
 from evidently.metrics import ClassificationClassSeparationPlot
@@ -16,6 +19,9 @@ from evidently.utils.data_preprocessing import DataDefinition
 
 
 class ClassificationPreset(MetricPreset):
+    class Config:
+        type_alias = "evidently:metric_preset:ClassificationPreset"
+
     """
     Metrics preset for classification performance.
 
@@ -33,13 +39,15 @@ class ClassificationPreset(MetricPreset):
     def __init__(
         self, columns: Optional[List[str]] = None, probas_threshold: Optional[float] = None, k: Optional[int] = None
     ):
-        super().__init__()
         self.columns = columns
         self.probas_threshold = probas_threshold
         self.k = k
+        super().__init__()
 
-    def generate_metrics(self, data_definition: DataDefinition):
-        result = [
+    def generate_metrics(
+        self, data_definition: DataDefinition, additional_data: Optional[Dict[str, Any]]
+    ) -> List[AnyMetric]:
+        result: List[AnyMetric] = [
             ClassificationQualityMetric(probas_threshold=self.probas_threshold, k=self.k),
             ClassificationClassBalance(),
             ClassificationConfusionMatrix(probas_threshold=self.probas_threshold, k=self.k),

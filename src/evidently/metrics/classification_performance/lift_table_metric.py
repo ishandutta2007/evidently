@@ -1,15 +1,24 @@
+from typing import TYPE_CHECKING
+from typing import Any
+from typing import Dict
 from typing import List
 from typing import Optional
+from typing import Type
+from typing import Union
 
 import pandas as pd
 
+from evidently._pydantic_compat import BaseModel
 from evidently.base_metric import InputData
+from evidently.base_metric import Metric
 from evidently.base_metric import MetricResult
-from evidently.calculations.classification_performance import PredictionData
 from evidently.calculations.classification_performance import calculate_lift_table
 from evidently.calculations.classification_performance import get_prediction_data
-from evidently.metrics.base_metric import Metric
+from evidently.core import IncludeTags
+from evidently.metric_results import Label
+from evidently.metric_results import PredictionData
 from evidently.model.widget import BaseWidgetInfo
+from evidently.options.base import AnyOptions
 from evidently.renderers.base_renderer import MetricRenderer
 from evidently.renderers.base_renderer import default_renderer
 from evidently.renderers.html_widgets import TabData
@@ -18,14 +27,42 @@ from evidently.renderers.html_widgets import table_data
 from evidently.renderers.html_widgets import widget_tabs
 from evidently.utils.data_operations import process_columns
 
+if TYPE_CHECKING:
+    from evidently._pydantic_compat import Model
+
+
+class LabelModel(BaseModel):
+    __root__: Union[int, str]
+
+    def validate(cls: Type["Model"], value: Any):  # type: ignore[override, misc]
+        try:
+            return int(value)
+        except TypeError:
+            return value
+
+
+LiftTable = Dict[Union[LabelModel, Label], List[List[Union[float, int]]]]
+
 
 class ClassificationLiftTableResults(MetricResult):
-    current_lift_table: Optional[dict] = None
-    reference_lift_table: Optional[dict] = None
+    class Config:
+        type_alias = "evidently:metric_result:ClassificationLiftTableResults"
+        pd_include = False
+        field_tags = {
+            "current_lift_table": {IncludeTags.Current},
+            "reference_lift_table": {IncludeTags.Reference},
+            "top": {IncludeTags.Parameter},
+        }
+
+    current_lift_table: Optional[LiftTable] = None
+    reference_lift_table: Optional[LiftTable] = None
     top: Optional[int] = 10
 
 
 class ClassificationLiftTable(Metric[ClassificationLiftTableResults]):
+    class Config:
+        type_alias = "evidently:metric:ClassificationLiftTable"
+
     """
     Evidently metric with inherited behaviour, provides data for lift analysis
 
@@ -38,8 +75,9 @@ class ClassificationLiftTable(Metric[ClassificationLiftTableResults]):
 
     top: int
 
-    def __init__(self, top: int = 10) -> None:
+    def __init__(self, top: int = 10, options: AnyOptions = None) -> None:
         self.top = top
+        super().__init__(options=options)
 
     def calculate(self, data: InputData) -> ClassificationLiftTableResults:
         dataset_columns = process_columns(data.current_data, data.column_mapping)
@@ -67,7 +105,7 @@ class ClassificationLiftTable(Metric[ClassificationLiftTableResults]):
         labels = prediction.labels
         if prediction.prediction_probas is None:
             raise ValueError("Lift Table can be calculated only on " "binary probabilistic predictions")
-        binaraized_target = (target_data.values.reshape(-1, 1) == labels).astype(int)
+        binaraized_target = (target_data.to_numpy().reshape(-1, 1) == labels).astype(int)
         lift_table = {}
         if len(labels) <= 2:
             binaraized_target = pd.DataFrame(binaraized_target[:, 0])
@@ -136,7 +174,7 @@ class ClassificationLiftTableRenderer(MetricRenderer):
                         title="",
                         size=size,
                     )
-                    tab_data.append(TabData(label, table))
+                    tab_data.append(TabData(str(label), table))
                 result.append(widget_tabs(title="Current: Lift Table", tabs=tab_data))
         if reference_lift_table is not None:
             if len(reference_lift_table.keys()) == 1:
@@ -157,6 +195,6 @@ class ClassificationLiftTableRenderer(MetricRenderer):
                         title="",
                         size=size,
                     )
-                    tab_data.append(TabData(label, table))
+                    tab_data.append(TabData(str(label), table))
                 result.append(widget_tabs(title="Reference: Lift Table", tabs=tab_data))
         return result

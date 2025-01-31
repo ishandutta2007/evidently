@@ -8,6 +8,7 @@ from evidently.base_metric import InputData
 from evidently.base_metric import Metric
 from evidently.base_metric import MetricResult
 from evidently.calculations.classification_performance import get_prediction_data
+from evidently.core import IncludeTags
 from evidently.metric_results import PRCurve
 from evidently.metric_results import PRCurveData
 from evidently.metric_results import PredictionData
@@ -22,11 +23,20 @@ from evidently.utils.data_operations import process_columns
 
 
 class ClassificationPRCurveResults(MetricResult):
+    class Config:
+        type_alias = "evidently:metric_result:ClassificationPRCurveResults"
+        pd_include = False
+
+        field_tags = {"current_pr_curve": {IncludeTags.Current}, "reference_pr_curve": {IncludeTags.Reference}}
+
     current_pr_curve: Optional[PRCurve] = None
     reference_pr_curve: Optional[PRCurve] = None
 
 
 class ClassificationPRCurve(Metric[ClassificationPRCurveResults]):
+    class Config:
+        type_alias = "evidently:metric:ClassificationPRCurve"
+
     def calculate(self, data: InputData) -> ClassificationPRCurveResults:
         dataset_columns = process_columns(data.current_data, data.column_mapping)
         target_name = dataset_columns.utility_columns.target
@@ -48,8 +58,8 @@ class ClassificationPRCurve(Metric[ClassificationPRCurveResults]):
         labels = prediction.labels
         if prediction.prediction_probas is None:
             raise ValueError("PR Curve can be calculated only on binary probabilistic predictions")
-        binaraized_target = (target_data.values.reshape(-1, 1) == labels).astype(int)
-        pr_curve = {}
+        binaraized_target = (target_data.to_numpy().reshape(-1, 1) == labels).astype(int)
+        pr_curve: PRCurve = {}
         if len(labels) <= 2:
             binaraized_target = pd.DataFrame(binaraized_target[:, 0])
             binaraized_target.columns = ["target"]
@@ -63,7 +73,6 @@ class ClassificationPRCurve(Metric[ClassificationPRCurveResults]):
             binaraized_target = pd.DataFrame(binaraized_target)
             binaraized_target.columns = labels
             for label in labels:
-
                 pr, rcl, thrs = metrics.precision_recall_curve(
                     binaraized_target[label],
                     prediction.prediction_probas[label],

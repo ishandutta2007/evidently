@@ -11,6 +11,7 @@ from plotly.subplots import make_subplots
 from evidently.base_metric import InputData
 from evidently.base_metric import MetricResult
 from evidently.core import AllDict
+from evidently.core import IncludeTags
 from evidently.metric_results import DatasetColumns
 from evidently.metrics.classification_performance.base_classification_metric import ThresholdClassificationMetric
 from evidently.metrics.classification_performance.objects import ClassesMetrics
@@ -26,6 +27,9 @@ from evidently.utils.data_operations import process_columns
 
 
 class ClassificationQuality(MetricResult):
+    class Config:
+        type_alias = "evidently:metric_result:ClassificationQuality"
+
     metrics: ClassesMetrics
     roc_aucs: Optional[List[float]]
 
@@ -35,12 +39,36 @@ class ClassificationQuality(MetricResult):
 
 
 class ClassificationQualityByClassResult(MetricResult):
+    class Config:
+        type_alias = "evidently:metric_result:ClassificationQualityByClassResult"
+        field_tags = {
+            "current": {IncludeTags.Current},
+            "reference": {IncludeTags.Reference},
+            "columns": {IncludeTags.Parameter},
+        }
+
     columns: DatasetColumns
     current: ClassificationQuality
     reference: Optional[ClassificationQuality]
 
+    def get_pandas(self) -> pd.DataFrame:
+        dfs = []
+        for field in ["current", "reference"]:
+            value: Optional[ClassificationQuality] = getattr(self, field)
+            if value is None:
+                continue
+            for class_value, class_metrics in value.metrics.items():
+                df = class_metrics.get_pandas()
+                df["class_value"] = class_value
+                df["dataset"] = field
+                dfs.append(df)
+        return pd.concat(dfs)
+
 
 class ClassificationQualityByClass(ThresholdClassificationMetric[ClassificationQualityByClassResult]):
+    class Config:
+        type_alias = "evidently:metric:ClassificationQualityByClass"
+
     def __init__(
         self,
         probas_threshold: Optional[float] = None,
@@ -62,10 +90,14 @@ class ClassificationQualityByClass(ThresholdClassificationMetric[ClassificationQ
 
         current_roc_aucs = None
         if prediction.prediction_probas is not None:
-            binaraized_target = (target.values.reshape(-1, 1) == list(prediction.prediction_probas.columns)).astype(int)
+            binaraized_target = (target.to_numpy().reshape(-1, 1) == list(prediction.prediction_probas.columns)).astype(
+                int
+            )
             current_roc_aucs = sklearn.metrics.roc_auc_score(
                 binaraized_target, prediction.prediction_probas, average=None
             ).tolist()
+            for idx, item in enumerate(list(prediction.prediction_probas.columns)):
+                metrics_matrix[item].roc_auc = current_roc_aucs[idx]
         reference_roc_aucs = None
 
         reference = None
@@ -80,11 +112,13 @@ class ClassificationQualityByClass(ThresholdClassificationMetric[ClassificationQ
             ).classes
             if ref_prediction.prediction_probas is not None:
                 binaraized_target = (
-                    ref_target.values.reshape(-1, 1) == list(ref_prediction.prediction_probas.columns)
+                    ref_target.to_numpy().reshape(-1, 1) == list(ref_prediction.prediction_probas.columns)
                 ).astype(int)
                 reference_roc_aucs = sklearn.metrics.roc_auc_score(
                     binaraized_target, ref_prediction.prediction_probas, average=None
                 ).tolist()
+                for idx, item in enumerate(list(ref_prediction.prediction_probas.columns)):
+                    ref_metrics[item].roc_auc = reference_roc_aucs[idx]
             reference = ClassificationQuality(metrics=ref_metrics, roc_aucs=reference_roc_aucs)
         return ClassificationQualityByClassResult(
             columns=columns,

@@ -1,10 +1,10 @@
+from typing import Any
 from typing import Dict
 from typing import List
 from typing import Optional
-from typing import Sequence
 
-from evidently.base_metric import Metric
 from evidently.calculations.stattests import PossibleStatTestType
+from evidently.metric_preset.metric_preset import AnyMetric
 from evidently.metric_preset.metric_preset import MetricPreset
 from evidently.metrics import ColumnCorrelationsMetric
 from evidently.metrics import ColumnDriftMetric
@@ -16,6 +16,9 @@ from evidently.utils.data_preprocessing import DataDefinition
 
 
 class TargetDriftPreset(MetricPreset):
+    class Config:
+        type_alias = "evidently:metric_preset:TargetDriftPreset"
+
     """Metric preset for Target Drift analysis.
 
     Contains metrics:
@@ -51,7 +54,6 @@ class TargetDriftPreset(MetricPreset):
         text_stattest_threshold: Optional[float] = None,
         per_column_stattest_threshold: Optional[Dict[str, float]] = None,
     ):
-        super().__init__()
         self.columns = columns
         self.stattest = stattest
         self.cat_stattest = cat_stattest
@@ -63,11 +65,14 @@ class TargetDriftPreset(MetricPreset):
         self.num_stattest_threshold = num_stattest_threshold
         self.text_stattest_threshold = text_stattest_threshold
         self.per_column_stattest_threshold = per_column_stattest_threshold
+        super().__init__()
 
-    def generate_metrics(self, data_definition: DataDefinition) -> Sequence[Metric]:
+    def generate_metrics(
+        self, data_definition: DataDefinition, additional_data: Optional[Dict[str, Any]]
+    ) -> List[AnyMetric]:
         target = data_definition.get_target_column()
         prediction = data_definition.get_prediction_columns()
-        result: List[Metric] = []
+        result: List[AnyMetric] = []
         columns_by_target = []
 
         if target is not None:
@@ -75,7 +80,7 @@ class TargetDriftPreset(MetricPreset):
 
             stattest, threshold = resolve_stattest_threshold(
                 target.column_name,
-                "cat" if data_definition.task() == TaskType.CLASSIFICATION_TASK else "num",
+                "cat" if data_definition.task == TaskType.CLASSIFICATION_TASK else "num",
                 self.stattest,
                 self.cat_stattest,
                 self.num_stattest,
@@ -95,7 +100,7 @@ class TargetDriftPreset(MetricPreset):
                 )
             )
 
-            if data_definition.task() == TaskType.REGRESSION_TASK:
+            if data_definition.task == TaskType.REGRESSION_TASK:
                 result.append(ColumnValuePlot(column_name=target.column_name))
 
             result.append(ColumnCorrelationsMetric(column_name=target.column_name))
@@ -104,7 +109,7 @@ class TargetDriftPreset(MetricPreset):
             columns_by_target.append(prediction.predicted_values.column_name)
             stattest, threshold = resolve_stattest_threshold(
                 prediction.predicted_values.column_name,
-                "cat" if data_definition.task() == TaskType.CLASSIFICATION_TASK else "num",
+                "cat" if data_definition.task == TaskType.CLASSIFICATION_TASK else "num",
                 self.stattest,
                 self.cat_stattest,
                 self.num_stattest,

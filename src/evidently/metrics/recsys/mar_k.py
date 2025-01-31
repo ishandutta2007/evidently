@@ -4,6 +4,9 @@ from evidently.renderers.base_renderer import default_renderer
 
 
 class MARKMetric(TopKMetric):
+    class Config:
+        type_alias = "evidently:metric:MARKMetric"
+
     def key(self):
         return "mar"
 
@@ -11,4 +14,4 @@ class MARKMetric(TopKMetric):
 @default_renderer(wrap_type=MARKMetric)
 class MARKMetricRenderer(TopKMetricRenderer):
     yaxis_name = "mar@k"
-    header = "MAR@"
+    header = "MAR"

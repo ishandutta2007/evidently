@@ -14,9 +14,11 @@ from plotly.subplots import make_subplots
 from evidently.base_metric import InputData
 from evidently.base_metric import Metric
 from evidently.base_metric import MetricResult
+from evidently.base_metric import UsesRawDataMixin
 from evidently.calculations.regression_performance import error_bias_table
 from evidently.calculations.regression_performance import error_with_quantiles
 from evidently.core import ColumnType
+from evidently.core import IncludeTags
 from evidently.features.generated_features import FeatureDescriptor
 from evidently.features.generated_features import GeneratedFeature
 from evidently.features.non_letter_character_percentage_feature import NonLetterCharacterPercentage
@@ -34,8 +36,27 @@ from evidently.utils.data_preprocessing import DataDefinition
 
 class RegressionErrorBiasTableResults(MetricResult):
     class Config:
+        type_alias = "evidently:metric_result:RegressionErrorBiasTableResults"
         dict_exclude_fields = {"current_plot_data", "reference_plot_data"}
-        pd_exclude_fields = {"current_plot_data", "reference_plot_data"}
+        pd_exclude_fields = {
+            "current_plot_data",
+            "reference_plot_data",
+            "num_feature_names",
+            "cat_feature_names",
+            "error_bias",
+            "columns",
+        }
+
+        field_tags = {
+            "current_plot_data": {IncludeTags.Current, IncludeTags.Render},
+            "reference_plot_data": {IncludeTags.Reference, IncludeTags.Render},
+            "target_name": {IncludeTags.Parameter},
+            "prediction_name": {IncludeTags.Parameter},
+            "num_feature_names": {IncludeTags.Parameter},
+            "cat_feature_names": {IncludeTags.Parameter},
+            "columns": {IncludeTags.Parameter},
+            "error_bias": {IncludeTags.Extra},
+        }
 
     top_error: float
     current_plot_data: pd.DataFrame
@@ -48,8 +69,11 @@ class RegressionErrorBiasTableResults(MetricResult):
     columns: Optional[List[str]] = None
 
 
-class RegressionErrorBiasTable(Metric[RegressionErrorBiasTableResults]):
+class RegressionErrorBiasTable(UsesRawDataMixin, Metric[RegressionErrorBiasTableResults]):
     # by default, we get 5% values for the error bias calculations
+    class Config:
+        type_alias = "evidently:metric:RegressionErrorBiasTable"
+
     TOP_ERROR_DEFAULT: ClassVar[float] = 0.05
     TOP_ERROR_MIN: ClassVar[float] = 0
     TOP_ERROR_MAX: ClassVar[float] = 0.5
@@ -157,16 +181,16 @@ class RegressionErrorBiasTable(Metric[RegressionErrorBiasTableResults]):
                 columns.remove(column)
                 num_feature_names += list(features.keys())
                 columns += list(features.keys())
-                curr_text_df = pd.concat([data.get_current_column(x.feature_name()) for x in features.values()], axis=1)
-                curr_text_df.columns = list(features.keys())
+                curr_text_df = pd.concat([data.get_current_column(x.as_column()) for x in features.values()], axis=1)
+                curr_text_df.columns = pd.Index(list(features.keys()))
                 curr_df = pd.concat([curr_df.reset_index(drop=True), curr_text_df.reset_index(drop=True)], axis=1)
 
                 if ref_df is not None:
                     ref_text_df = pd.concat(
-                        [data.get_reference_column(x.feature_name()) for x in features.values()],
+                        [data.get_reference_column(x.as_column()) for x in features.values()],
                         axis=1,
                     )
-                    ref_text_df.columns = list(features.keys())
+                    ref_text_df.columns = pd.Index(list(features.keys()))
                     ref_df = pd.concat([ref_df.reset_index(drop=True), ref_text_df.reset_index(drop=True)], axis=1)
 
         columns_ext = np.union1d(columns, [target_name, prediction_name])
@@ -533,7 +557,6 @@ class RegressionErrorBiasTableRenderer(MetricRenderer):
             additional_graphs_data = []
 
             for feature_name in result.num_feature_names:  # + cat_feature_names: #feature_names:
-
                 feature_type = "num"
 
                 hist = px.histogram(
@@ -589,7 +612,6 @@ class RegressionErrorBiasTableRenderer(MetricRenderer):
                 )
 
             for feature_name in result.cat_feature_names:  # feature_names:
-
                 feature_type = "cat"
 
                 hist = px.histogram(

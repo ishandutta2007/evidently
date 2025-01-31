@@ -13,6 +13,9 @@ from evidently.renderers.base_renderer import default_renderer
 
 
 class NDCGKMetric(Metric[TopKMetricResult]):
+    class Config:
+        type_alias = "evidently:metric:NDCGKMetric"
+
     k: int
     min_rel_score: Optional[int]
     no_feedback_users: bool
@@ -28,7 +31,7 @@ class NDCGKMetric(Metric[TopKMetricResult]):
     def calculate(self, data: InputData) -> TopKMetricResult:
         curr, ref = get_curr_and_ref_df(data, self.min_rel_score, self.no_feedback_users, False)
         current = self.calculate_ndcg(curr, self.k)
-        reference: Optional[dict] = None
+        reference: Optional[pd.Series] = None
         if ref is not None:
             reference = self.calculate_ndcg(ref, self.k)
 
@@ -49,7 +52,7 @@ class NDCGKMetric(Metric[TopKMetricResult]):
         for i in range(1, max_k + 1):
             discount = 1 / np.log2(np.arange(i) + 2)
             dcg = df[df.preds <= i].groupby("users").dcg.sum()
-            idcg = df.groupby("users").target.apply(lambda x: x[:i].dot(discount)).rename("idcg")
+            idcg = df.groupby("users").target.apply(lambda x: x[:i].dot(discount[: len(x)])).rename("idcg")
             user_df = pd.concat([dcg, idcg], axis=1).fillna(0)
             ndcg_k.append((user_df["dcg"] / user_df["idcg"]).replace([np.inf, -np.inf], np.nan).fillna(0).mean())
 
@@ -59,4 +62,4 @@ class NDCGKMetric(Metric[TopKMetricResult]):
 @default_renderer(wrap_type=NDCGKMetric)
 class NDCGKMetricRenderer(TopKMetricRenderer):
     yaxis_name = "ndcg@k"
-    header = "NDCG@"
+    header = "NDCG"

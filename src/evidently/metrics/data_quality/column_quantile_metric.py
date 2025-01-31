@@ -11,6 +11,7 @@ from evidently.base_metric import InputData
 from evidently.base_metric import Metric
 from evidently.base_metric import MetricResult
 from evidently.core import ColumnType
+from evidently.core import IncludeTags
 from evidently.metric_results import Distribution
 from evidently.model.widget import BaseWidgetInfo
 from evidently.options.base import AnyOptions
@@ -26,6 +27,9 @@ from evidently.utils.visualizations import plot_distr_with_cond_perc_button
 
 
 class QuantileStats(MetricResult):
+    class Config:
+        type_alias = "evidently:metric_result:QuantileStats"
+
     value: float
     # calculated value of the quantile
     distribution: Distribution
@@ -33,6 +37,14 @@ class QuantileStats(MetricResult):
 
 
 class ColumnQuantileMetricResult(ColumnMetricResult):
+    class Config:
+        type_alias = "evidently:metric_result:ColumnQuantileMetricResult"
+        field_tags = {
+            "current": {IncludeTags.Current},
+            "reference": {IncludeTags.Reference},
+            "quantile": {IncludeTags.Parameter},
+        }
+
     # range of the quantile (from 0 to 1)
     quantile: float
     current: QuantileStats
@@ -40,6 +52,9 @@ class ColumnQuantileMetricResult(ColumnMetricResult):
 
 
 class ColumnQuantileMetric(Metric[ColumnQuantileMetricResult]):
+    class Config:
+        type_alias = "evidently:metric:ColumnQuantileMetric"
+
     """Calculates quantile with specified range"""
 
     column_name: ColumnName

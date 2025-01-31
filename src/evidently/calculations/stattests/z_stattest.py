@@ -22,6 +22,7 @@ Example:
     >>> from evidently.options.data_drift import DataDriftOptions
     >>> options = DataDriftOptions(all_features_stattest="z")
 """
+
 from typing import Tuple
 
 import numpy as np
@@ -34,7 +35,7 @@ from evidently.calculations.stattests.utils import get_unique_not_nan_values_lis
 from evidently.core import ColumnType
 
 
-def proportions_diff_z_stat_ind(ref: pd.DataFrame, curr: pd.DataFrame):
+def proportions_diff_z_stat_ind(ref: pd.Series, curr: pd.Series):
     # pylint: disable=invalid-name
     n1 = len(ref)
     n2 = len(curr)

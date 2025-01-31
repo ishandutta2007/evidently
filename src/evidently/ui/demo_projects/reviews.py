@@ -1,7 +1,10 @@
+import os
+import pathlib
 from datetime import datetime
 from datetime import timedelta
 
 import numpy as np
+import pandas as pd
 from sklearn import datasets
 
 from evidently import ColumnMapping
@@ -11,6 +14,7 @@ from evidently.renderers.html_widgets import WidgetSize
 from evidently.report import Report
 from evidently.ui.dashboards import CounterAgg
 from evidently.ui.dashboards import DashboardPanelCounter
+from evidently.ui.dashboards import DashboardPanelDistribution
 from evidently.ui.dashboards import DashboardPanelPlot
 from evidently.ui.dashboards import PanelValue
 from evidently.ui.dashboards import PlotType
@@ -20,9 +24,18 @@ from evidently.ui.workspace import WorkspaceBase
 
 
 def create_data():
-    reviews_data = datasets.fetch_openml(name="Womens-E-Commerce-Clothing-Reviews", version=2, as_frame="auto")
-    reviews = reviews_data.frame
-    for name, rs in (("TheOtherStore", 0), ("AMajorCompetitor", 42), ("AwesomeShop", 100)):
+    if os.environ.get("EVIDENTLY_TEST_ENVIRONMENT", "0") != "1":
+        reviews_data = datasets.fetch_openml(name="Womens-E-Commerce-Clothing-Reviews", version=2, as_frame="auto")
+        reviews = reviews_data.frame
+
+    else:
+        reviews = pd.read_parquet(pathlib.Path(__file__).parent.joinpath("../../../../test_data/reviews.parquet"))
+
+    for name, rs in (
+        ("TheOtherStore", 0),
+        ("AMajorCompetitor", 42),
+        ("AwesomeShop", 100),
+    ):
         np.random.seed(rs)
         random_index = np.random.choice(reviews.index, 300, replace=False)
         reviews.loc[random_index, "Review_Text"] = (
@@ -69,7 +82,7 @@ def create_report(i: int, data):
             metrics.ColumnSummaryMetric(column_name=descriptors.OOV(display_name="OOV").for_column("Review_Text")),
             metrics.ColumnSummaryMetric(
                 column_name=descriptors.NonLetterCharacterPercentage(
-                    display_name="NonLetterCharacterPercentage"
+                    display_name="Non Letter Character Percentage"
                 ).for_column("Review_Text")
             ),
             metrics.ColumnSummaryMetric(
@@ -108,7 +121,9 @@ def create_report(i: int, data):
         )
     else:
         text_report.run(
-            reference_data=reference, current_data=current[(current.Rating < 5)], column_mapping=column_mapping
+            reference_data=reference,
+            current_data=current[(current.Rating < 5)],
+            column_mapping=column_mapping,
         )
 
     return text_report
@@ -280,7 +295,7 @@ def create_project(workspace: WorkspaceBase, name: str):
                     metric_id="ColumnSummaryMetric",
                     metric_args={
                         "column_name": descriptors.NonLetterCharacterPercentage(
-                            display_name="NonLetterCharacterPercentage"
+                            display_name="Non Letter Character Percentage"
                         ).for_column("Review_Text")
                     },
                     field_path="current_characteristics.mean",
@@ -336,7 +351,11 @@ def create_project(workspace: WorkspaceBase, name: str):
                     metric_args={
                         "column_name": descriptors.TriggerWordsPresence(
                             display_name="competitors",
-                            words_list=["theotherstore", "amajorcompetitor", "awesomeshop"],
+                            words_list=[
+                                "theotherstore",
+                                "amajorcompetitor",
+                                "awesomeshop",
+                            ],
                             lemmatize=False,
                         ).for_column("Review_Text"),
                         "category": 1,
@@ -351,22 +370,19 @@ def create_project(workspace: WorkspaceBase, name: str):
     )
     # Reviews that mention url
     project.dashboard.add_panel(
-        DashboardPanelPlot(
-            title="Share of reviews with URLs",
-            filter=ReportFilter(metadata_values={}, tag_values=[]),
-            values=[
-                PanelValue(
-                    metric_id="ColumnSummaryMetric",
-                    metric_args={
-                        "column_name": descriptors.RegExp(display_name="urls", reg_exp=r".*(http|www)\S+.*").for_column(
-                            "Review_Text"
-                        )
-                    },
-                    field_path="current_characteristics.mean",
-                    legend="reviews with URLs",
-                ),
-            ],
-            plot_type=PlotType.LINE,
+        DashboardPanelDistribution(
+            title="Reviews with URLs distribution",
+            filter=ReportFilter(metadata_values={}, tag_values=[], include_test_suites=True),
+            value=PanelValue(
+                metric_id="ColumnSummaryMetric",
+                metric_args={
+                    "column_name": descriptors.RegExp(display_name="urls", reg_exp=r".*(http|www)\S+.*").for_column(
+                        "Review_Text"
+                    )
+                },
+                field_path="plot_data.bins_for_hist.current",
+                legend="reviews with URLs",
+            ),
             size=WidgetSize.HALF,
         )
     )
@@ -410,6 +426,7 @@ def create_project(workspace: WorkspaceBase, name: str):
 
 reviews_demo_project = DemoProject(
     name="Demo project - Reviews",
+    create_snapshot=None,
     create_data=create_data,
     create_report=create_report,
     create_project=create_project,

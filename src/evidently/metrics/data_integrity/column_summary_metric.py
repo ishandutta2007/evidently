@@ -14,6 +14,7 @@ from evidently.base_metric import ColumnMetricResult
 from evidently.base_metric import ColumnName
 from evidently.base_metric import InputData
 from evidently.base_metric import MetricResult
+from evidently.base_metric import UsesRawDataMixin
 from evidently.calculations.data_quality import MAX_CATEGORIES
 from evidently.calculations.data_quality import FeatureQualityStats
 from evidently.calculations.data_quality import get_features_stats
@@ -53,6 +54,9 @@ from evidently.utils.visualizations import plot_time_feature_distr
 
 
 class ColumnCharacteristics(MetricResult):
+    class Config:
+        type_alias = "evidently:metric_result:ColumnCharacteristics"
+
     number_of_rows: int
     count: int
     missing: Optional[int]
@@ -60,6 +64,9 @@ class ColumnCharacteristics(MetricResult):
 
 
 class NumericCharacteristics(ColumnCharacteristics):
+    class Config:
+        type_alias = "evidently:metric_result:NumericCharacteristics"
+
     mean: Optional[Numeric]
     std: Optional[Numeric]
     min: Optional[Numeric]
@@ -76,6 +83,9 @@ class NumericCharacteristics(ColumnCharacteristics):
 
 
 class CategoricalCharacteristics(ColumnCharacteristics):
+    class Config:
+        type_alias = "evidently:metric_result:CategoricalCharacteristics"
+
     unique: Optional[int]
     unique_percentage: Optional[float]
     most_common: Optional[object]
@@ -85,6 +95,9 @@ class CategoricalCharacteristics(ColumnCharacteristics):
 
 
 class DatetimeCharacteristics(ColumnCharacteristics):
+    class Config:
+        type_alias = "evidently:metric_result:DatetimeCharacteristics"
+
     unique: Optional[int]
     unique_percentage: Optional[float]
     most_common: Optional[object]
@@ -94,6 +107,9 @@ class DatetimeCharacteristics(ColumnCharacteristics):
 
 
 class TextCharacteristics(ColumnCharacteristics):
+    class Config:
+        type_alias = "evidently:metric_result:TextCharacteristics"
+
     text_length_min: Optional[float]
     text_length_mean: Optional[float]
     text_length_max: Optional[float]
@@ -106,11 +122,18 @@ class TextCharacteristics(ColumnCharacteristics):
 
 
 class DataInTimePlots(MetricResult):
+    class Config:
+        type_alias = "evidently:metric_result:DataInTimePlots"
+        field_tags = {"current": {IncludeTags.Current}, "reference": {IncludeTags.Reference}}
+
     current: pd.DataFrame
     reference: Optional[pd.DataFrame]
 
 
 class DataInTime(MetricResult):
+    class Config:
+        type_alias = "evidently:metric_result:DataInTime"
+
     data_for_plots: DataInTimePlots
     freq: str
     datetime_name: str
@@ -118,6 +141,7 @@ class DataInTime(MetricResult):
 
 class DataByTarget(MetricResult):
     class Config:
+        type_alias = "evidently:metric_result:DataByTarget"
         smart_union = True
 
     box_data: Optional[Dict[str, dict]]
@@ -130,7 +154,9 @@ class DataByTarget(MetricResult):
 
 class DataQualityPlot(MetricResult):
     class Config:
+        type_alias = "evidently:metric_result:DataQualityPlot"
         dict_include = False
+        pd_include = False
         tags = {IncludeTags.Render}
 
     bins_for_hist: Optional[Histogram]
@@ -178,20 +204,20 @@ def plot_data(
     elif column_type == ColumnType.Datetime:
         prefix, freq = choose_agg_period(current_data, reference_data)
         curr_data = current_data.dt.to_period(freq=freq).value_counts().reset_index()
-        curr_data.columns = ["x", "number_of_items"]
+        curr_data.columns = pd.Index(["x", "number_of_items"])
         curr_data["x"] = curr_data["x"].dt.to_timestamp()
         reference = None
         if reference_data is not None:
             ref_data = reference_data.dt.to_period(freq=freq).value_counts().reset_index()
-            ref_data.columns = ["x", "number_of_items"]
+            ref_data.columns = pd.Index(["x", "number_of_items"])
             ref_data["x"] = ref_data["x"].dt.to_timestamp()
             max_ref_date = ref_data["x"].max()
             min_curr_date = curr_data["x"].min()
             if max_ref_date == min_curr_date:
                 curr_data, ref_data = _split_periods(curr_data, ref_data, "x")
             reference = ref_data
-            reference.columns = ["x", "count"]
-        curr_data.columns = ["x", "count"]
+            reference.columns = pd.Index(["x", "count"])
+        curr_data.columns = pd.Index(["x", "count"])
         data_hist = Histogram(
             current=HistogramData.from_df(curr_data),
             reference=HistogramData.from_df(reference) if reference is not None else None,
@@ -303,9 +329,15 @@ def _split_periods(curr_data: pd.DataFrame, ref_data: pd.DataFrame, feature_name
 
 class ColumnSummaryResult(ColumnMetricResult):
     class Config:
+        type_alias = "evidently:metric_result:ColumnSummaryResult"
         pd_name_mapping = {
-            "reference_characteristics": "ref",
-            "current_characteristics": "cur",
+            "reference_characteristics": "reference",
+            "current_characteristics": "current",
+        }
+
+        field_tags = {
+            "current_characteristics": {IncludeTags.Current},
+            "reference_characteristics": {IncludeTags.Reference},
         }
 
     reference_characteristics: Optional[ColumnCharacteristics]
@@ -313,7 +345,10 @@ class ColumnSummaryResult(ColumnMetricResult):
     plot_data: DataQualityPlot
 
 
-class ColumnSummaryMetric(ColumnMetric[ColumnSummaryResult]):
+class ColumnSummaryMetric(UsesRawDataMixin, ColumnMetric[ColumnSummaryResult]):
+    class Config:
+        type_alias = "evidently:metric:ColumnSummaryMetric"
+
     _generated_text_features: Optional[Dict[str, Union[TextLength, NonLetterCharacterPercentage, OOVWordsPercentage]]]
 
     def __init__(self, column_name: Union[str, ColumnName], options: AnyOptions = None):
@@ -341,7 +376,6 @@ class ColumnSummaryMetric(ColumnMetric[ColumnSummaryResult]):
         return [ColumnType.Numerical, ColumnType.Categorical, ColumnType.Text]
 
     def calculate(self, data: InputData) -> ColumnSummaryResult:
-
         if not data.has_column(self.column_name):
             raise ValueError(f"Column '{self.column_name.display_name}' not found in dataset.")
 
@@ -424,11 +458,11 @@ class ColumnSummaryMetric(ColumnMetric[ColumnSummaryResult]):
         if column_type in [ColumnType.Categorical, ColumnType.Numerical]:
             counts_of_values = {}
             current_counts = column_current_data.value_counts(dropna=False).reset_index()
-            current_counts.columns = ["x", "count"]
+            current_counts.columns = pd.Index(["x", "count"])
             counts_of_values["current"] = current_counts.head(10)
             if column_reference_data is not None:
                 reference_counts = column_reference_data.value_counts(dropna=False).reset_index()
-                reference_counts.columns = ["x", "count"]
+                reference_counts.columns = pd.Index(["x", "count"])
                 counts_of_values["reference"] = reference_counts.head(10)
 
         return ColumnSummaryResult(
@@ -502,13 +536,16 @@ class ColumnSummaryMetric(ColumnMetric[ColumnSummaryResult]):
         number_of_rows = len(text_feature)
         missing = text_feature.isna().sum()
         if dataset == "current":
-            text_length = data.get_current_column(generated_text_features["text_length"].feature_name())
-            oov = data.get_current_column(generated_text_features["oov"].feature_name())
-            non_letter_char = data.get_current_column(generated_text_features["non_letter_char"].feature_name())
+            text_length = data.get_current_column(generated_text_features["text_length"].as_column())
+            oov = data.get_current_column(generated_text_features["oov"].as_column())
+            non_letter_char = data.get_current_column(generated_text_features["non_letter_char"].as_column())
         else:
-            text_length = data.get_reference_column(generated_text_features["text_length"].feature_name())
-            oov = data.get_reference_column(generated_text_features["oov"].feature_name())
-            non_letter_char = data.get_reference_column(generated_text_features["non_letter_char"].feature_name())
+            text_length_ref = data.get_reference_column(generated_text_features["text_length"].as_column())
+            oov_ref = data.get_reference_column(generated_text_features["oov"].as_column())
+            non_letter_char_ref = data.get_reference_column(generated_text_features["non_letter_char"].as_column())
+            if text_length_ref is None or oov_ref is None or non_letter_char_ref is None:
+                raise ValueError("Reference required but not present in data")
+            (text_length, oov, non_letter_char) = (text_length_ref, oov_ref, non_letter_char_ref)
 
         return TextCharacteristics(
             number_of_rows=number_of_rows,

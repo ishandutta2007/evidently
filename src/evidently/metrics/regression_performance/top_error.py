@@ -10,6 +10,7 @@ import pandas as pd
 from evidently.base_metric import InputData
 from evidently.base_metric import Metric
 from evidently.base_metric import MetricResult
+from evidently.base_metric import UsesRawDataMixin
 from evidently.core import IncludeTags
 from evidently.metric_results import ContourData
 from evidently.metric_results import raw_agg_properties
@@ -29,19 +30,28 @@ from evidently.utils.visualizations import plot_top_error_contours
 
 
 class TopData(MetricResult):
+    class Config:
+        type_alias = "evidently:metric_result:TopData"
+
     mean_err_per_group: Dict[str, Dict[str, float]]
     scatter: RegressionScatter
 
 
 class AggTopData(MetricResult):
+    class Config:
+        type_alias = "evidently:metric_result:AggTopData"
+
     mean_err_per_group: Dict[str, Dict[str, float]]
     contour: Dict[str, ContourData]
 
 
 class RegressionTopErrorMetricResults(MetricResult):
     class Config:
+        type_alias = "evidently:metric_result:RegressionTopErrorMetricResults"
         dict_include = False
+        pd_include = False
         tags = {IncludeTags.Render}
+        field_tags = {"current": {IncludeTags.Current}, "reference": {IncludeTags.Reference}}
 
     current: Union[TopData, AggTopData]
     reference: Optional[Union[TopData, AggTopData]]
@@ -51,7 +61,10 @@ class RegressionTopErrorMetricResults(MetricResult):
     reference_raw, reference_agg = raw_agg_properties("reference", TopData, AggTopData, True)
 
 
-class RegressionTopErrorMetric(Metric[RegressionTopErrorMetricResults]):
+class RegressionTopErrorMetric(UsesRawDataMixin, Metric[RegressionTopErrorMetricResults]):
+    class Config:
+        type_alias = "evidently:metric:RegressionTopErrorMetric"
+
     def calculate(self, data: InputData) -> RegressionTopErrorMetricResults:
         dataset_columns = process_columns(data.current_data, data.column_mapping)
         target_name = dataset_columns.utility_columns.target
@@ -117,7 +130,13 @@ class RegressionTopErrorMetric(Metric[RegressionTopErrorMetricResults]):
             agg_data=True,
         )
 
-    def _make_df_for_plot(self, df, target_name: str, prediction_name: str, datetime_column_name: Optional[str]):
+    def _make_df_for_plot(
+        self,
+        df: pd.DataFrame,
+        target_name: str,
+        prediction_name: str,
+        datetime_column_name: Optional[str],
+    ) -> pd.DataFrame:
         result = df.replace([np.inf, -np.inf], np.nan)
         if datetime_column_name is not None:
             result.dropna(
@@ -126,9 +145,11 @@ class RegressionTopErrorMetric(Metric[RegressionTopErrorMetricResults]):
                 inplace=True,
                 subset=[target_name, prediction_name, datetime_column_name],
             )
-            return result.sort_values(datetime_column_name)
+            result.sort_values(datetime_column_name, inplace=True)
+            return result
         result.dropna(axis=0, how="any", inplace=True, subset=[target_name, prediction_name])
-        return result.sort_index()
+        result.sort_index(inplace=True)
+        return result
 
     @staticmethod
     def _get_data_for_scatter(df: pd.DataFrame, target_name: str, prediction_name: str) -> RegressionScatter:
@@ -189,7 +210,6 @@ class RegressionTopErrorMetric(Metric[RegressionTopErrorMetricResults]):
 
     @staticmethod
     def _get_data_for_сontour(df: pd.DataFrame, target_name: str, prediction_name: str) -> dict:
-
         underestimation = get_gaussian_kde(
             df.loc[df["Error bias"] == "Underestimation", prediction_name],
             df.loc[df["Error bias"] == "Underestimation", target_name],
@@ -209,7 +229,6 @@ class RegressionTopErrorMetric(Metric[RegressionTopErrorMetricResults]):
     def _calculate_underperformance(
         self, error: pd.Series, quantile_5: float, quantile_95: float, conf_interval_n_sigmas: int = 1
     ):
-
         mae_under = np.mean(error[error <= quantile_5])
         mae_exp = np.mean(error[(error > quantile_5) & (error < quantile_95)])
         mae_over = np.mean(error[error >= quantile_95])
@@ -247,7 +266,7 @@ class RegressionTopErrorMetricRenderer(MetricRenderer):
         else:
             curr_contour = result.current_agg.contour
             ref_contour = result.reference_agg.contour if result.reference_agg is not None else None
-            fig = plot_top_error_contours(curr_contour, ref_contour, "Acual value", "Predicted value")
+            fig = plot_top_error_contours(curr_contour, ref_contour, "Actual value", "Predicted value")
             fig = json.loads(fig.to_json())
         res = [
             header_text(label="Error Bias Table"),

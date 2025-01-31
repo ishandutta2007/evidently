@@ -15,8 +15,10 @@ from plotly.subplots import make_subplots
 from evidently.base_metric import InputData
 from evidently.base_metric import Metric
 from evidently.base_metric import MetricResult
+from evidently.base_metric import UsesRawDataMixin
 from evidently.calculations.classification_performance import get_prediction_data
 from evidently.core import ColumnType
+from evidently.core import IncludeTags
 from evidently.features.non_letter_character_percentage_feature import NonLetterCharacterPercentage
 from evidently.features.OOV_words_percentage_feature import OOVWordsPercentage
 from evidently.features.text_length_feature import TextLength
@@ -32,7 +34,15 @@ from evidently.utils.data_preprocessing import DataDefinition
 
 class TargetByFeaturesTableResults(MetricResult):
     class Config:
+        type_alias = "evidently:metric_result:TargetByFeaturesTableResults"
         dict_include = False
+        field_tags = {
+            "current": {IncludeTags.Current},
+            "reference": {IncludeTags.Reference},
+            "target_name": {IncludeTags.Parameter},
+            "columns": {IncludeTags.Parameter},
+            "task": {IncludeTags.Parameter},
+        }
 
     current: StatsByFeature
     reference: Optional[StatsByFeature]
@@ -41,7 +51,10 @@ class TargetByFeaturesTableResults(MetricResult):
     task: str
 
 
-class TargetByFeaturesTable(Metric[TargetByFeaturesTableResults]):
+class TargetByFeaturesTable(UsesRawDataMixin, Metric[TargetByFeaturesTableResults]):
+    class Config:
+        type_alias = "evidently:metric:TargetByFeaturesTable"
+
     columns: Optional[List[str]]
     _text_features_gen: Optional[
         Dict[
@@ -151,10 +164,10 @@ class TargetByFeaturesTable(Metric[TargetByFeaturesTableResults]):
                 columns += list(self._text_features_gen[col].keys())
                 columns.remove(col)
                 curr_text_df = pd.concat(
-                    [data.get_current_column(x.feature_name()) for x in list(self._text_features_gen[col].values())],
+                    [data.get_current_column(x.as_column()) for x in list(self._text_features_gen[col].values())],
                     axis=1,
                 )
-                curr_text_df.columns = list(self._text_features_gen[col].keys())
+                curr_text_df.columns = pd.Index(list(self._text_features_gen[col].keys()))
                 curr_df = pd.concat(
                     [
                         curr_df.reset_index(drop=True),
@@ -165,13 +178,10 @@ class TargetByFeaturesTable(Metric[TargetByFeaturesTableResults]):
 
                 if ref_df is not None:
                     ref_text_df = pd.concat(
-                        [
-                            data.get_reference_column(x.feature_name())
-                            for x in list(self._text_features_gen[col].values())
-                        ],
+                        [data.get_reference_column(x.as_column()) for x in list(self._text_features_gen[col].values())],
                         axis=1,
                     )
-                    ref_text_df.columns = list(self._text_features_gen[col].keys())
+                    ref_text_df.columns = pd.Index(list(self._text_features_gen[col].keys()))
                     ref_df = pd.concat(
                         [
                             ref_df.reset_index(drop=True),
@@ -211,10 +221,12 @@ class TargetByFeaturesTableRenderer(MetricRenderer):
         current_data = result.current.plot_data
         # todo: better typing
         assert current_data is not None
-        reference_data = result.reference.plot_data if result.reference is not None else None
+        if result.reference is None:
+            raise ValueError("reference is not set but required")
+        reference_data = result.reference.plot_data
         target_name = result.target_name
         curr_predictions = result.current.predictions
-        ref_predictions = result.reference.predictions if result.reference is not None else None
+        ref_predictions = result.reference.predictions
         columns = result.columns
         task = result.task
         if curr_predictions is not None and ref_predictions is not None:

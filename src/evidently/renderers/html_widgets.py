@@ -6,15 +6,16 @@ from typing import List
 from typing import Optional
 from typing import Tuple
 from typing import Union
-from uuid import uuid4
 
 import numpy as np
 import pandas as pd
 from plotly import graph_objs as go
 from plotly.subplots import make_subplots
+from uuid6 import uuid7
 
 from evidently.metric_results import Distribution
 from evidently.metric_results import HistogramData
+from evidently.metric_results import LiftCurve
 from evidently.metric_results import PRCurve
 from evidently.metric_results import ROCCurve
 from evidently.model.widget import BaseWidgetInfo
@@ -24,7 +25,7 @@ from evidently.model.widget import WidgetType
 from evidently.options import ColorOptions
 
 
-class WidgetSize(Enum):
+class WidgetSize(int, Enum):
     HALF = 1
     FULL = 2
 
@@ -139,7 +140,7 @@ def plotly_graph_tabs(*, title: str, figures: List[GraphData], size: WidgetSize 
         params={
             "graphs": [
                 {
-                    "id": str(uuid4()),
+                    "id": str(uuid7()),
                     "title": graph.title,
                     "graph": {
                         "data": graph.data,
@@ -338,7 +339,7 @@ def widget_tabs(*, title: str = "", size: WidgetSize = WidgetSize.FULL, tabs: Li
         title=title,
         type=WidgetType.TABS.value,
         size=size.value,
-        tabs=[TabInfo(str(uuid4()), tab.title, tab.widget) for tab in tabs],
+        tabs=[TabInfo(str(uuid7()), tab.title, tab.widget) for tab in tabs],
     )
 
 
@@ -612,7 +613,7 @@ def get_heatmaps_widget(
 
         # show values if thw heatmap is small
         if len(columns) < 15:
-            heatmap_text = np.round(data, 2).astype(str)
+            heatmap_text: Optional[pd.DataFrame] = np.round(data, 2).astype(str)  # type: ignore[assignment]
             heatmap_text_template: Optional[str] = "%{text}"
 
         else:
@@ -729,8 +730,8 @@ def get_pr_rec_plot_data(
 
 
 def get_lift_plot_data(
-    current_lift_curve: dict,
-    reference_lift_curve: Optional[dict],
+    current_lift_curve: LiftCurve,
+    reference_lift_curve: Optional[LiftCurve],
     color_options: ColorOptions,
 ) -> List[Tuple[str, BaseWidgetInfo]]:
     """
@@ -759,14 +760,13 @@ def get_lift_plot_data(
     for label in current_lift_curve.keys():
         fig = make_subplots(rows=1, cols=cols, subplot_titles=subplot_titles, shared_yaxes=True)
         trace = go.Scatter(
-            x=current_lift_curve[label]["top"],
-            y=current_lift_curve[label]["lift"],
+            x=current_lift_curve[label].top,
+            y=current_lift_curve[label].lift,
             mode="lines+markers",
             name="Lift",
             hoverinfo="text",
             text=[
-                f"top: {str(int(current_lift_curve[label]['top'][i]))}, "
-                f"lift={str(current_lift_curve[label]['lift'][i])}"
+                f"top: {str(int(current_lift_curve[label].top[i]))}, " f"lift={str(current_lift_curve[label].lift[i])}"
                 for i in range(100)
             ],
             legendgroup="Lift",
@@ -779,14 +779,14 @@ def get_lift_plot_data(
         fig.update_xaxes(title_text="Top", row=1, col=1)
         if reference_lift_curve is not None:
             trace = go.Scatter(
-                x=reference_lift_curve[label]["top"],
-                y=reference_lift_curve[label]["lift"],
+                x=reference_lift_curve[label].top,
+                y=reference_lift_curve[label].lift,
                 mode="lines+markers",
                 name="Lift",
                 hoverinfo="text",
                 text=[
-                    f"top: {str(int(reference_lift_curve[label]['top'][i]))}, "
-                    f"lift={str(reference_lift_curve[label]['lift'][i])}"
+                    f"top: {str(int(reference_lift_curve[label].top[i]))}, "
+                    f"lift={str(reference_lift_curve[label].lift[i])}"
                     for i in range(100)
                 ],
                 legendgroup="Lift",
@@ -913,3 +913,40 @@ def get_class_separation_plot_data_agg(
 
         additional_plots.append((str(label), plotly_figure(title="", figure=fig)))
     return additional_plots
+
+
+def group_widget(
+    *,
+    title: str,
+    widgets: List[BaseWidgetInfo],
+) -> BaseWidgetInfo:
+    return BaseWidgetInfo(
+        title=title,
+        type=WidgetType.GROUP.value,
+        widgets=widgets,
+        size=2,
+    )
+
+
+def rich_data(
+    *,
+    title: str,
+    description: str,
+    header: List[str],
+    metrics: List[dict],
+    graph: Optional[PlotlyGraphInfo],
+):
+    return BaseWidgetInfo(
+        type=WidgetType.RICH_DATA.value,
+        title="",
+        size=2,
+        params={
+            "header": title,
+            "description": description,
+            "metricsValuesHeaders": header,
+            "metrics": metrics,
+            "graph": graph,
+            "details": {"parts": [], "insights": []},
+        },
+        additionalGraphs=[],
+    )

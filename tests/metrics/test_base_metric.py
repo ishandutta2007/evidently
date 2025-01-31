@@ -1,3 +1,4 @@
+from typing import ClassVar
 from typing import Dict
 from typing import Optional
 
@@ -8,12 +9,16 @@ from evidently.base_metric import ColumnName
 from evidently.base_metric import DatasetType
 from evidently.base_metric import InputData
 from evidently.base_metric import Metric
-from evidently.base_metric import additional_feature
+from evidently.base_metric import MetricResult
 from evidently.core import ColumnType
 from evidently.features.generated_features import GeneratedFeature
 from evidently.metrics import ColumnValueRangeMetric
 from evidently.metrics.base_metric import generate_column_metrics
+from evidently.options.base import Options
+from evidently.options.option import Option
 from evidently.pipeline.column_mapping import ColumnMapping
+from evidently.pydantic_utils import FingerprintPart
+from evidently.pydantic_utils import get_value_fingerprint
 from evidently.report import Report
 from evidently.utils.data_preprocessing import DataDefinition
 
@@ -44,6 +49,9 @@ def test_metric_generator():
 
 
 class SimpleMetric(Metric[int]):
+    class Config:
+        alias_required = False
+
     column_name: ColumnName
 
     def __init__(self, column_name: ColumnName):
@@ -55,6 +63,9 @@ class SimpleMetric(Metric[int]):
 
 
 class SimpleMetric2(Metric[int]):
+    class Config:
+        alias_required = False
+
     column_name: ColumnName
 
     def __init__(self, column_name: ColumnName):
@@ -66,6 +77,9 @@ class SimpleMetric2(Metric[int]):
 
 
 class SimpleMetricWithFeatures(Metric[int]):
+    class Config:
+        alias_required = False
+
     column_name: str
     _feature: Optional[GeneratedFeature]
 
@@ -76,7 +90,7 @@ class SimpleMetricWithFeatures(Metric[int]):
 
     def calculate(self, data: InputData) -> int:
         if data.data_definition.get_column(self.column_name).column_type == ColumnType.Categorical:
-            return data.get_current_column(self._feature.feature_name()).sum()
+            return data.get_current_column(self._feature.as_column()).sum()
         return data.get_current_column(self.column_name).sum()
 
     def required_features(self, data_definition: DataDefinition):
@@ -88,10 +102,13 @@ class SimpleMetricWithFeatures(Metric[int]):
 
 
 class MetricWithAllTextFeatures(Metric[Dict[str, int]]):
+    class Config:
+        alias_required = False
+
     _features: Dict[str, "LengthFeature"]
 
     def calculate(self, data: InputData):
-        return {k: data.get_current_column(v.feature_name()).sum() for k, v in self._features.items()}
+        return {k: data.get_current_column(v.as_column()).sum() for k, v in self._features.items()}
 
     def required_features(self, data_definition: DataDefinition):
         self._features = {
@@ -102,6 +119,10 @@ class MetricWithAllTextFeatures(Metric[Dict[str, int]]):
 
 
 class SimpleGeneratedFeature(GeneratedFeature):
+    class Config:
+        alias_required = False
+
+    __feature_type__: ClassVar = ColumnType.Numerical
     column_name: str
 
     def __init__(self, column_name: str, display_name: str = ""):
@@ -112,15 +133,15 @@ class SimpleGeneratedFeature(GeneratedFeature):
     def generate_feature(self, data: pd.DataFrame, data_definition: DataDefinition) -> pd.DataFrame:
         return pd.DataFrame(dict([(self.column_name, data[self.column_name] * 2)]))
 
-    def feature_name(self) -> ColumnName:
-        return additional_feature(
-            self,
-            self.column_name,
-            self.display_name if self.display_name else "SGF: {self.column_name}",
-        )
+    def _as_column(self) -> ColumnName:
+        return self._create_column(subcolumn=self.column_name, default_display_name="SGF: {self.column_name}")
 
 
 class LengthFeature(GeneratedFeature):
+    class Config:
+        alias_required = False
+
+    __feature_type__: ClassVar = ColumnType.Numerical
     column_name: str
     max_length: Optional[int] = None
 
@@ -132,15 +153,15 @@ class LengthFeature(GeneratedFeature):
     def generate_feature(self, data: pd.DataFrame, data_definition: DataDefinition) -> pd.DataFrame:
         return pd.DataFrame(dict([(self.column_name, data[self.column_name].apply(len))]))
 
-    def feature_name(self) -> ColumnName:
-        return additional_feature(self, self.column_name, f"Length of {self.column_name}")
+    def _as_column(self) -> ColumnName:
+        return self._create_column(self.column_name, default_display_name=f"Length of {self.column_name}")
 
 
 @pytest.mark.parametrize(
     "metric,result",
     [
         (SimpleMetric(ColumnName("col1", "col1", DatasetType.MAIN, None)), 6),
-        (SimpleMetric(SimpleGeneratedFeature("col1").feature_name()), 12),
+        (SimpleMetric(SimpleGeneratedFeature("col1").as_column()), 12),
         (SimpleMetricWithFeatures("col1"), 6),
         (SimpleMetricWithFeatures("col2"), 9),
         (MetricWithAllTextFeatures(), {"col3": 9, "col4": 12}),
@@ -175,8 +196,8 @@ def test_additional_features(metric, result):
     [
         (
             [
-                SimpleMetric(SimpleGeneratedFeature("col1", "d1").feature_name()),
-                SimpleMetric2(SimpleGeneratedFeature("col1", "d2").feature_name()),
+                SimpleMetric(SimpleGeneratedFeature("col1", "d1").as_column()),
+                SimpleMetric2(SimpleGeneratedFeature("col1", "d2").as_column()),
             ],
             (12, 13),
         ),
@@ -205,3 +226,43 @@ def test_additional_features_multi_metrics(metrics, result):
     report._inner_suite.raise_for_error()
     assert metrics[0].get_result() == result[0]
     assert metrics[1].get_result() == result[1]
+
+
+def test_options_fingerprint_not_specified():
+    class MyOption(Option):
+        field: str
+
+    class MockMetric(Metric[MetricResult]):
+        class Config:
+            alias_required = False
+
+        def calculate(self, data: InputData):
+            return MetricResult()
+
+    m1 = MockMetric(options=[MyOption(field="a")])
+    m2 = MockMetric(options=[MyOption(field="b")])
+
+    assert m1.get_fingerprint() == m2.get_fingerprint()
+
+
+def test_options_fingerprint_specified_type():
+    class MyOption(Option):
+        field: str
+
+    class UsesMyOptionMixin:
+        options: Options
+
+        def get_options_fingerprint(self) -> FingerprintPart:
+            return get_value_fingerprint(self.options.get(MyOption).field)
+
+    class MockMetricWithOption(UsesMyOptionMixin, Metric[MetricResult]):
+        class Config:
+            alias_required = False
+
+        def calculate(self, data: InputData):
+            return MetricResult()
+
+    m3 = MockMetricWithOption(options=[MyOption(field="a")])
+    m4 = MockMetricWithOption(options=[MyOption(field="b")])
+
+    assert m3.get_fingerprint() != m4.get_fingerprint()

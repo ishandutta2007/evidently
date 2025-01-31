@@ -13,6 +13,7 @@ from evidently.base_metric import InputData
 from evidently.base_metric import Metric
 from evidently.base_metric import MetricResult
 from evidently.calculations.data_quality import get_rows_count
+from evidently.core import IncludeTags
 from evidently.core import pydantic_type_validator
 from evidently.model.widget import BaseWidgetInfo
 from evidently.options.base import AnyOptions
@@ -37,11 +38,33 @@ def null_valudator(value):
     raise ValueError("not a None")
 
 
-MissingValue = Union[np.float_, NoneKey, Any]  # type: ignore[valid-type]
+MissingValue = Union[np.double, NoneKey, Any]  # type: ignore[valid-type]
 
 
 class DatasetMissingValues(MetricResult):
     """Statistics about missed values in a dataset"""
+
+    class Config:
+        type_alias = "evidently:metric_result:DatasetMissingValues"
+        pd_exclude_fields = {
+            "different_missing_values_by_column",
+            "different_missing_values",
+            "number_of_different_missing_values_by_column",
+            "number_of_missing_values_by_column",
+            "share_of_missing_values_by_column",
+            "columns_with_missing_values",
+        }
+
+        field_tags = {
+            "different_missing_values": {IncludeTags.Extra},
+            "different_missing_values_by_column": {IncludeTags.Extra},
+            "number_of_different_missing_values_by_column": {IncludeTags.Extra},
+            "number_of_missing_values_by_column": {IncludeTags.Extra},
+            "share_of_missing_values_by_column": {IncludeTags.Extra},
+            "number_of_rows": {IncludeTags.Extra},
+            "number_of_columns": {IncludeTags.Extra},
+            "columns_with_missing_values": {IncludeTags.Extra},
+        }
 
     # set of different missing values in the dataset
     different_missing_values: Dict[MissingValue, int]
@@ -76,11 +99,18 @@ class DatasetMissingValues(MetricResult):
 
 
 class DatasetMissingValuesMetricResult(MetricResult):
+    class Config:
+        type_alias = "evidently:metric_result:DatasetMissingValuesMetricResult"
+        field_tags = {"current": {IncludeTags.Current}, "reference": {IncludeTags.Reference}}
+
     current: DatasetMissingValues
     reference: Optional[DatasetMissingValues] = None
 
 
 class DatasetMissingValuesMetric(Metric[DatasetMissingValuesMetricResult]):
+    class Config:
+        type_alias = "evidently:metric:DatasetMissingValuesMetric"
+
     """Count missing values in a dataset.
 
     Missing value is a null or NaN value.

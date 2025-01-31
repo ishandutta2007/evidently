@@ -27,11 +27,18 @@ SAMPLE_CONSTANT = 2500
 
 class EmbeddingsDriftMetricResults(MetricResult):
     class Config:
+        type_alias = "evidently:metric_result:EmbeddingsDriftMetricResults"
         dict_exclude_fields = {
             "reference",
             "current",
         }
-        field_tags = {k: {IncludeTags.Render} for k in dict_exclude_fields}
+
+        field_tags = {
+            "current": {IncludeTags.Current, IncludeTags.Render},
+            "reference": {IncludeTags.Reference, IncludeTags.Render},
+            "embeddings_name": {IncludeTags.Parameter},
+            "method_name": {IncludeTags.Parameter},
+        }
 
     embeddings_name: str
     drift_score: float
@@ -42,6 +49,9 @@ class EmbeddingsDriftMetricResults(MetricResult):
 
 
 class EmbeddingsDriftMetric(Metric[EmbeddingsDriftMetricResults]):
+    class Config:
+        type_alias = "evidently:metric:EmbeddingsDriftMetric"
+
     embeddings_name: str
     drift_method: Optional[DriftMethod]
 
@@ -54,7 +64,7 @@ class EmbeddingsDriftMetric(Metric[EmbeddingsDriftMetricResults]):
         if data.reference_data is None:
             raise ValueError("Reference dataset should be present")
         drift_method = self.drift_method or model(bootstrap=data.reference_data.shape[0] < 1000)
-        emb_dict = data.data_definition.embeddings()
+        emb_dict = data.data_definition.embeddings
         if emb_dict is None:
             raise ValueError("Embeddings should be defined in column mapping")
         if self.embeddings_name not in emb_dict.keys():

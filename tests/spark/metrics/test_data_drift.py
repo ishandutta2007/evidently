@@ -1,3 +1,4 @@
+import sys
 from typing import Callable
 from typing import List
 
@@ -15,9 +16,15 @@ from evidently.metrics import DataDriftTable
 from evidently.report import Report
 from evidently.spark.engine import SparkEngine
 from evidently.tests.utils import approx
+from tests.conftest import slow
 from tests.conftest import smart_assert_equal
 
 
+@slow
+@pytest.mark.skipif(
+    (sys.version_info.major, sys.version_info.minor) == (3, 12) and sys.platform.startswith("win"),
+    reason="on Windows 2022 with python 3.12 pyspark package is broken",
+)
 @pytest.mark.parametrize(
     "metric,column_mapping,result_adjust",
     [

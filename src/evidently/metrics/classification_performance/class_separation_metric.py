@@ -7,7 +7,9 @@ import pandas as pd
 from evidently.base_metric import InputData
 from evidently.base_metric import Metric
 from evidently.base_metric import MetricResult
+from evidently.base_metric import UsesRawDataMixin
 from evidently.calculations.classification_performance import get_prediction_data
+from evidently.core import IncludeTags
 from evidently.metric_results import ColumnAggScatter
 from evidently.metric_results import ColumnScatter
 from evidently.metric_results import ColumnScatterOrAgg
@@ -28,8 +30,14 @@ from evidently.utils.data_operations import process_columns
 
 class ClassificationClassSeparationPlotResults(MetricResult):
     class Config:
+        type_alias = "evidently:metric_result:ClassificationClassSeparationPlotResults"
         dict_exclude_fields = {"current", "reference"}
         pd_exclude_fields = {"current", "reference"}
+        field_tags = {
+            "current": {IncludeTags.Current, IncludeTags.Extra},
+            "reference": {IncludeTags.Reference, IncludeTags.Extra},
+            "target_name": {IncludeTags.Parameter},
+        }
 
     target_name: str
 
@@ -45,8 +53,8 @@ def prepare_box_data(df: pd.DataFrame, target_name: str, prediction_names: List[
     for name in prediction_names:
         df_name = df.copy()
         df_name[target_name] = (df_name[target_name] == name).astype(int)
-        df_for_plot = df_name.groupby(target_name)[name].quantile([0, 0.25, 0.5, 0.75, 1]).reset_index()
-        df_for_plot.columns = [target_name, "q", name]
+        df_for_plot = df_name.groupby(target_name)[name].quantile(np.array([0, 0.25, 0.5, 0.75, 1])).reset_index()
+        df_for_plot.columns = pd.Index([target_name, "q", name])
         res_df = pd.DataFrame()
         values = df_for_plot[target_name].unique()
 
@@ -64,7 +72,10 @@ def prepare_box_data(df: pd.DataFrame, target_name: str, prediction_names: List[
     return res
 
 
-class ClassificationClassSeparationPlot(Metric[ClassificationClassSeparationPlotResults]):
+class ClassificationClassSeparationPlot(UsesRawDataMixin, Metric[ClassificationClassSeparationPlotResults]):
+    class Config:
+        type_alias = "evidently:metric:ClassificationClassSeparationPlot"
+
     def __init__(self, options: AnyOptions = None):
         super().__init__(options=options)
 
@@ -97,9 +108,9 @@ class ClassificationClassSeparationPlot(Metric[ClassificationClassSeparationPlot
                 reference=column_scatter_from_df(reference_plot, True),
                 target_name=target_name,
             )
-        current_plot = prepare_box_data(current_plot, target_name, prediction_names)
+        current_plot = prepare_box_data(current_plot, target_name, prediction_names.tolist())
         if reference_plot is not None:
-            reference_plot = prepare_box_data(reference_plot, target_name, prediction_names)
+            reference_plot = prepare_box_data(reference_plot, target_name, prediction_names.tolist())
         return ClassificationClassSeparationPlotResults(
             current=current_plot,
             reference=reference_plot,

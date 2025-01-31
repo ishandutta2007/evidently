@@ -1,29 +1,26 @@
+from typing import Any
+from typing import ClassVar
 from typing import Optional
 
 import numpy as np
-import pandas as pd
 
-from evidently.base_metric import ColumnName
-from evidently.base_metric import additional_feature
-from evidently.features.generated_features import GeneratedFeature
-from evidently.utils.data_preprocessing import DataDefinition
+from evidently import ColumnType
+from evidently.features.generated_features import ApplyColumnGeneratedFeature
 
 
-class TextLength(GeneratedFeature):
+class TextLength(ApplyColumnGeneratedFeature):
+    class Config:
+        type_alias = "evidently:feature:TextLength"
+
+    __feature_type__: ClassVar = ColumnType.Numerical
+    display_name_template: ClassVar = "Text Length for {column_name}"
     column_name: str
 
     def __init__(self, column_name: str, display_name: Optional[str] = None):
-        self.column_name = column_name
         self.display_name = display_name
-        super().__init__()
+        super().__init__(column_name=column_name)
 
-    def generate_feature(self, data: pd.DataFrame, data_definition: DataDefinition) -> pd.DataFrame:
-        def text_len(s):
-            if s is None or (isinstance(s, float) and np.isnan(s)):
-                return 0
-            return len(s)
-
-        return pd.DataFrame(dict([(self.column_name, data[self.column_name].apply(text_len))]))
-
-    def feature_name(self) -> ColumnName:
-        return additional_feature(self, self.column_name, self.display_name or f"Text Length for {self.column_name}")
+    def apply(self, value: Any):
+        if value is None or (isinstance(value, float) and np.isnan(value)):
+            return 0
+        return len(value)

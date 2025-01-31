@@ -1,4 +1,5 @@
 import abc
+from typing import Dict
 from typing import Generic
 from typing import List
 from typing import Optional
@@ -11,25 +12,22 @@ from evidently.base_metric import ColumnName
 from evidently.base_metric import ColumnNotFound
 from evidently.base_metric import DatasetType
 from evidently.base_metric import GenericInputData
-from evidently.base_metric import InputData
 from evidently.base_metric import Metric
+from evidently.base_metric import TEngineDataType
 from evidently.calculation_engine.engine import Engine
+from evidently.calculation_engine.engine import EngineDatasets
+from evidently.calculation_engine.engine import TInputData
 from evidently.calculation_engine.metric_implementation import MetricImplementation
 from evidently.core import ColumnType
+from evidently.features.generated_features import FeatureResult
+from evidently.features.generated_features import GeneratedFeatures
+from evidently.options.base import Options
 from evidently.spark.base import SparkDataFrame
 from evidently.spark.base import SparkSeries
 from evidently.spark.base import create_data_definition_spark
-from evidently.utils.data_preprocessing import DataDefinition
 
 
-class SparkInputData(InputData):
-    reference_data: Optional[SparkDataFrame]
-    current_data: SparkDataFrame
-    reference_additional_features: Optional[SparkDataFrame]
-    current_additional_features: Optional[SparkDataFrame]
-    column_mapping: ColumnMapping
-    data_definition: DataDefinition
-
+class SparkInputData(GenericInputData[SparkDataFrame]):
     @staticmethod
     def _get_by_column_name(
         dataset: SparkDataFrame,
@@ -102,7 +100,7 @@ class SparkInputData(InputData):
         return _column
 
 
-class SparkEngine(Engine["SparkMetricImplementation", SparkInputData]):
+class SparkEngine(Engine["SparkMetricImplementation", SparkInputData, SparkDataFrame]):
     def convert_input_data(self, data: GenericInputData) -> SparkInputData:
         if not isinstance(data.current_data, SparkDataFrame) or (
             data.reference_data is not None and not isinstance(data.reference_data, SparkDataFrame)
@@ -111,18 +109,35 @@ class SparkEngine(Engine["SparkMetricImplementation", SparkInputData]):
         return SparkInputData(
             data.reference_data,
             data.current_data,
-            None,
-            None,
-            data.column_mapping,
-            data.data_definition,
-            additional_datasets=data.additional_datasets,
+            reference_additional_features=None,
+            current_additional_features=None,
+            column_mapping=data.column_mapping,
+            data_definition=data.data_definition,
+            additional_data=data.additional_data,
         )
 
-    def get_data_definition(self, current_data, reference_data, column_mapping: ColumnMapping):
+    def get_data_definition(
+        self,
+        current_data,
+        reference_data,
+        column_mapping: ColumnMapping,
+        categorical_features_cardinality: Optional[int] = None,
+    ):
         return create_data_definition_spark(current_data, reference_data, column_mapping)
 
-    def generate_additional_features(self, data: SparkInputData):
-        pass
+    def calculate_additional_features(
+        self, data: TInputData, features: List[GeneratedFeatures], options: Options
+    ) -> Dict[GeneratedFeatures, FeatureResult[TEngineDataType]]:
+        if len(features) > 0:
+            raise NotImplementedError("SparkEngine does not support generated features yet")
+        return {}
+
+    def merge_additional_features(
+        self, features: Dict[GeneratedFeatures, FeatureResult[TEngineDataType]]
+    ) -> EngineDatasets[SparkDataFrame]:
+        if len(features) > 0:
+            raise NotImplementedError("SparkEngine does not support generated features yet")
+        return EngineDatasets(current=None, reference=None)
 
 
 TMetric = TypeVar("TMetric", bound=Metric)

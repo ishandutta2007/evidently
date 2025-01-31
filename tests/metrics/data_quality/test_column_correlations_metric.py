@@ -30,7 +30,7 @@ from evidently.report import Report
         ),
         (
             pd.DataFrame(
-                {"feature1": ["n", "d", "p", "n"], "feature2": [0, 2, 2, 432], "feature3": ["f", "f", np.NaN, 432]}
+                {"feature1": ["n", "d", "p", "n"], "feature2": [0, 2, 2, 432], "feature3": ["f", "f", np.nan, 432]}
             ),
             None,
             ColumnMapping(categorical_features=["feature1", "feature2", "feature3"]),
@@ -56,7 +56,6 @@ def test_column_correlations_metric_success(
     metric: ColumnCorrelationsMetric,
     expected_result: ColumnCorrelationsMetricResult,
 ) -> None:
-
     report = Report(metrics=[metric])
     report.run(current_data=current_dataset, reference_data=reference_dataset, column_mapping=column_mapping)
     result = metric.get_result()

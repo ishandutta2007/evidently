@@ -1,5 +1,5 @@
 import dataclasses
-import uuid
+import warnings
 from collections import Counter
 from datetime import datetime
 from typing import Any
@@ -15,11 +15,16 @@ from evidently.base_metric import GenericInputData
 from evidently.calculation_engine.engine import Engine
 from evidently.calculation_engine.python_engine import PythonEngine
 from evidently.core import IncludeOptions
+from evidently.core import new_id
 from evidently.model.dashboard import DashboardInfo
 from evidently.model.widget import BaseWidgetInfo
+from evidently.model.widget import set_source_fingerprint
 from evidently.options.base import AnyOptions
 from evidently.pipeline.column_mapping import ColumnMapping
+from evidently.renderers.base_renderer import TestHtmlInfo
 from evidently.renderers.base_renderer import TestRenderer
+from evidently.renderers.base_renderer import WidgetIdGenerator
+from evidently.renderers.base_renderer import replace_test_widget_ids
 from evidently.suite.base_suite import MetadataValueType
 from evidently.suite.base_suite import ReportBase
 from evidently.suite.base_suite import Snapshot
@@ -29,6 +34,7 @@ from evidently.test_preset.test_preset import TestPreset
 from evidently.tests.base_test import DEFAULT_GROUP
 from evidently.tests.base_test import Test
 from evidently.tests.base_test import TestStatus
+from evidently.ui.type_aliases import SnapshotID
 from evidently.utils.data_preprocessing import DataDefinition
 from evidently.utils.generators import BaseGenerator
 
@@ -41,20 +47,26 @@ class TestSuite(ReportBase):
     _test_presets: List[TestPreset]
     _test_generators: List[BaseGenerator]
     _tests: List[Test]
+    _timestamp: Optional[datetime]
 
     def __init__(
         self,
         tests: Optional[List[Union[Test, TestPreset, BaseGenerator]]],
         options: AnyOptions = None,
         timestamp: Optional[datetime] = None,
-        id: Optional[uuid.UUID] = None,
+        id: Optional[SnapshotID] = None,
         metadata: Dict[str, MetadataValueType] = None,
         tags: List[str] = None,
         name: str = None,
     ):
-        super().__init__(options, timestamp, name)
+        super().__init__(options, name)
+        if id is not None:
+            warnings.warn("id argument is deprecated and has no effect", DeprecationWarning)
+        self._timestamp = None
+        if timestamp is not None:
+            warnings.warn("timestamp argument is deprecated, use timestamp in run() method", DeprecationWarning)
+            self._timestamp = timestamp
         self._inner_suite = Suite(self.options)
-        self.id = id or uuid.uuid4()
         self._test_presets = []
         self._test_generators = []
         self._tests = []
@@ -97,23 +109,28 @@ class TestSuite(ReportBase):
         current_data: pd.DataFrame,
         column_mapping: Optional[ColumnMapping] = None,
         engine: Optional[Type[Engine]] = None,
-        additional_datasets: Dict[str, Any] = None,
+        additional_data: Dict[str, Any] = None,
+        timestamp: Optional[datetime] = None,
     ) -> None:
         if column_mapping is None:
             column_mapping = ColumnMapping()
-
+        self.id = new_id()
+        if self._timestamp is not None:
+            self.timestamp = self._timestamp
+        else:
+            self.timestamp = timestamp or datetime.now()
         self._inner_suite.reset()
         self._inner_suite.set_engine(PythonEngine() if engine is None else engine())
         self._add_tests()
         if self._inner_suite.context.engine is None:
             raise ValueError("Engine is not set")
-        self._data_definition = self._inner_suite.context.engine.get_data_definition(
+        self._data_definition = self._inner_suite.context.get_data_definition(
             current_data,
             reference_data,
             column_mapping,
         )
         for preset in self._test_presets:
-            tests = preset.generate_tests(self._data_definition)
+            tests = preset.generate_tests(self._data_definition, additional_data=additional_data)
 
             for test in tests:
                 if isinstance(test, BaseGenerator):
@@ -129,7 +146,7 @@ class TestSuite(ReportBase):
             current_data,
             column_mapping,
             self._data_definition,
-            additional_datasets=additional_datasets or {},
+            additional_data=additional_data or {},
         )
 
         self._inner_suite.run_calculate(data)
@@ -196,16 +213,21 @@ class TestSuite(ReportBase):
         return result
 
     def _build_dashboard_info(self):
-        test_results = []
+        test_results: List[TestHtmlInfo] = []
         total_tests = len(self._inner_suite.context.test_results)
         by_status = {}
         color_options = self.options.color_options
 
+        generator = WidgetIdGenerator("")
         for test, test_result in self._inner_suite.context.test_results.items():
+            generator.base_id = test.get_id()
             renderer = find_test_renderer(type(test), self._inner_suite.context.renderers)
             renderer.color_options = color_options
             by_status[test_result.status] = by_status.get(test_result.status, 0) + 1
-            test_results.append(renderer.render_html(test))
+            html = renderer.render_html(test)
+            set_source_fingerprint((di.info for di in html.details), test)
+            replace_test_widget_ids(html, generator)
+            test_results.append(html)
 
         summary_widget = BaseWidgetInfo(
             title="",
@@ -228,6 +250,7 @@ class TestSuite(ReportBase):
                     dict(
                         title=test_info.name,
                         description=test_info.description,
+                        test_fingerprint=test_info.test_fingerprint,
                         state=test_info.status.lower(),
                         details=dict(
                             parts=[dict(id=item.id, title=item.title, type="widget") for item in test_info.details]
@@ -241,7 +264,7 @@ class TestSuite(ReportBase):
             additionalGraphs=[],
         )
         return (
-            "evidently_dashboard_" + str(uuid.uuid4()).replace("-", ""),
+            "evidently_dashboard_" + str(new_id()).replace("-", ""),
             DashboardInfo("Test Suite", widgets=[summary_widget, test_suite_widget]),
             {item.id: dataclasses.asdict(item.info) for idx, info in enumerate(test_results) for item in info.details},
         )
@@ -256,12 +279,12 @@ class TestSuite(ReportBase):
         ctx = snapshot.suite.to_context()
         suite = TestSuite(
             tests=None,
-            timestamp=snapshot.timestamp,
-            id=snapshot.id,
             metadata=snapshot.metadata,
             tags=snapshot.tags,
             options=snapshot.options,
             name=snapshot.name,
         )
+        suite.id = snapshot.id
+        suite.timestamp = snapshot.timestamp
         suite._inner_suite.context = ctx
         return suite

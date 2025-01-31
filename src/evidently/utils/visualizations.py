@@ -106,6 +106,8 @@ def plot_distr_with_perc_button(
     color_options: ColorOptions,
     subplots: bool = True,
     to_json: bool = True,
+    current_name: str = "current",
+    reference_name: str = "reference",
 ):
     if not same_color:
         curr_color = color_options.get_current_data_color()
@@ -121,13 +123,13 @@ def plot_distr_with_perc_button(
 
     if is_subplots:
         cols = 2
-        subplot_titles = ["current", "reference"]
+        subplot_titles = [current_name, reference_name]
     fig = make_subplots(rows=1, cols=cols, shared_yaxes=True, subplot_titles=subplot_titles)
 
-    fig = add_traces_with_perc(fig, hist_curr, 1, 1, curr_color, "current")
+    fig = add_traces_with_perc(fig, hist_curr, 1, 1, curr_color, current_name)
     fig.update_xaxes(title_text=xaxis_name, row=1, col=1)
     if hist_ref is not None:
-        fig = add_traces_with_perc(fig, hist_ref, 1, int(is_subplots) + 1, ref_color, "reference")
+        fig = add_traces_with_perc(fig, hist_ref, 1, int(is_subplots) + 1, ref_color, reference_name)
         fig.update_xaxes(title_text=xaxis_name, row=1, col=2)
         visible += [True, False]
 
@@ -579,7 +581,11 @@ def make_hist_for_num_plot(curr: pd.Series, ref: Optional[pd.Series] = None, cal
 
 
 def plot_cat_cat_rel(
-    curr: pd.DataFrame, ref: pd.DataFrame, target_name: str, feature_name: str, color_options: ColorOptions
+    curr: pd.DataFrame,
+    ref: Optional[pd.DataFrame],
+    target_name: str,
+    feature_name: str,
+    color_options: ColorOptions,
 ):
     """
     Accepts current and reference data as pandas dataframes with two columns: feature_name and "count_objects".
@@ -593,8 +599,8 @@ def plot_cat_cat_rel(
     visible = []
     for i, val in enumerate(curr[target_name].astype(str).unique()):
         trace = go.Bar(
-            x=curr.loc[curr[target_name] == val, feature_name],
-            y=curr.loc[curr[target_name] == val, "count_objects"],
+            x=curr.loc[curr[target_name].astype(str) == val, feature_name],
+            y=curr.loc[curr[target_name].astype(str) == val, "count_objects"],
             marker_color=color_options.color_sequence[i],
             name=str(val),
             legendgroup=str(val),
@@ -603,8 +609,8 @@ def plot_cat_cat_rel(
         fig.add_trace(trace, 1, 1)
 
         trace = go.Bar(
-            x=curr.loc[curr[target_name] == val, feature_name],
-            y=curr.loc[curr[target_name] == val, "count_objects"] * 100 / curr["count_objects"].sum(),
+            x=curr.loc[curr[target_name].astype(str) == val, feature_name],
+            y=curr.loc[curr[target_name].astype(str) == val, "count_objects"] * 100 / curr["count_objects"].sum(),
             marker_color=color_options.color_sequence[i],
             name=str(val),
             legendgroup=str(val),
@@ -617,8 +623,8 @@ def plot_cat_cat_rel(
     if ref is not None:
         for i, val in enumerate(ref[target_name].astype(str).unique()):
             trace = go.Bar(
-                x=ref.loc[ref[target_name] == val, feature_name],
-                y=ref.loc[ref[target_name] == val, "count_objects"],
+                x=ref.loc[ref[target_name].astype(str) == val, feature_name],
+                y=ref.loc[ref[target_name].astype(str) == val, "count_objects"],
                 marker_color=color_options.color_sequence[i],
                 opacity=0.6,
                 name=str(val),
@@ -627,8 +633,8 @@ def plot_cat_cat_rel(
             fig.add_trace(trace, 1, 2)
 
             trace = go.Bar(
-                x=ref.loc[ref[target_name] == val, feature_name],
-                y=ref.loc[ref[target_name] == val, "count_objects"] * 100 / ref["count_objects"].sum(),
+                x=ref.loc[ref[target_name].astype(str) == val, feature_name],
+                y=ref.loc[ref[target_name].astype(str) == val, "count_objects"] * 100 / ref["count_objects"].sum(),
                 marker_color=color_options.color_sequence[i],
                 opacity=0.6,
                 name=str(val),
@@ -684,23 +690,35 @@ def plot_num_num_rel(
 
 
 def make_hist_for_cat_plot(curr: pd.Series, ref: pd.Series = None, normalize: bool = False, dropna=False) -> Histogram:
-    hist_df = curr.astype(str).value_counts(normalize=normalize, dropna=dropna).reset_index()
-    hist_df.columns = ["x", "count"]
+    hist_df = (
+        curr.astype(str)
+        .value_counts(normalize=normalize, dropna=dropna)  # type: ignore[call-overload]
+        .reset_index()
+    )
+    hist_df.columns = pd.Index(["x", "count"])
     current = HistogramData.from_df(hist_df)
 
     reference = None
     if ref is not None:
-        hist_df = ref.astype(str).value_counts(normalize=normalize, dropna=dropna).reset_index()
-        hist_df.columns = ["x", "count"]
+        hist_df = (
+            ref.astype(str)
+            .value_counts(normalize=normalize, dropna=dropna)  # type: ignore[call-overload]
+            .reset_index()
+        )
+        hist_df.columns = pd.Index(["x", "count"])
         reference = HistogramData.from_df(hist_df)
     return Histogram(current=current, reference=reference)
 
 
 def get_distribution_for_category_column(column: pd.Series, normalize: bool = False) -> Distribution:
-    value_counts = column.value_counts(normalize=normalize, dropna=False)
+    value_counts = column.value_counts(normalize=normalize, dropna=False)  # type: ignore[call-overload]
+
+    # filter out na values if it amount == 0
+    new_values = [(k, v) for k, v in value_counts.items() if (not pd.isna(k) or v > 0)]  # type: ignore[call-overload]
+
     return Distribution(
-        x=value_counts.index.values,
-        y=value_counts.values,
+        x=[x[0] for x in new_values],
+        y=[x[1] for x in new_values],
     )
 
 
@@ -1165,20 +1183,15 @@ def plot_top_error_contours(
 
 
 def choose_agg_period(current_date_column: pd.Series, reference_date_column: Optional[pd.Series]) -> Tuple[str, str]:
-    prefix_dict = {
-        "A": "year",
-        "Q": "quarter",
-        "M": "month",
-        "W": "week",
-        "D": "day",
-        "H": "hour",
-    }
+    prefix_dict = {"A": "year", "Q": "quarter", "M": "month", "W": "week", "D": "day", "H": "hour", "min": "minute"}
     datetime_feature = current_date_column
     if reference_date_column is not None:
         datetime_feature = pd.concat([datetime_feature, reference_date_column])
     days = (datetime_feature.max() - datetime_feature.min()).days
+    if days == 0:
+        days = (datetime_feature.max() - datetime_feature.min()).seconds / (3600 * 24)
     time_points = pd.Series(
-        index=["A", "Q", "M", "W", "D", "H"],
+        index=["A", "Q", "M", "W", "D", "H", "min"],
         data=[
             abs(OPTIMAL_POINTS - days / 365),
             abs(OPTIMAL_POINTS - days / 90),
@@ -1186,6 +1199,7 @@ def choose_agg_period(current_date_column: pd.Series, reference_date_column: Opt
             abs(OPTIMAL_POINTS - days / 7),
             abs(OPTIMAL_POINTS - days),
             abs(OPTIMAL_POINTS - days * 24),
+            abs(OPTIMAL_POINTS - days * 24 * 60),
         ],
     )
     period_prefix = prefix_dict[time_points.idxmin()]
@@ -1217,13 +1231,14 @@ def prepare_df_for_time_index_plot(
     if datetime_name is not None:
         if prefix is None and freq is None:
             prefix, freq = choose_agg_period(df[datetime_name], None)
-        plot_df = df.copy()
-        plot_df["per"] = plot_df[datetime_name].dt.to_period(freq=freq)
-        plot_df = plot_df.groupby("per")[column_name].agg(["mean", "std"]).reset_index()
-        plot_df["per"] = plot_df["per"].dt.to_timestamp()
-        return plot_df, prefix
-    plot_df = df[column_name].reset_index().sort_values(index_name)
-    plot_df["per"] = pd.cut(plot_df[index_name], OPTIMAL_POINTS if bins is None else bins, labels=False)
+        dt_plot_df: pd.DataFrame = df.copy()
+        dt_plot_df["per"] = dt_plot_df[datetime_name].dt.to_period(freq=freq)
+        dt_plot_df = dt_plot_df.groupby("per")[column_name].agg(["mean", "std"]).reset_index()
+        dt_plot_df["per"] = dt_plot_df["per"].dt.to_timestamp()
+        return dt_plot_df, prefix
+    plot_df: pd.DataFrame = df[column_name].reset_index().sort_values(index_name)
+    new_bins = OPTIMAL_POINTS if bins is None else bins
+    plot_df["per"] = pd.cut(plot_df[index_name], bins=new_bins, labels=False)  # type: ignore[call-overload]
     plot_df = plot_df.groupby("per")[column_name].agg(["mean", "std"]).reset_index()
     return plot_df, None
 
@@ -1385,4 +1400,123 @@ def plot_metric_k(curr_data: pd.Series, ref_data: Optional[pd.Series], yaxis_nam
         )
     fig.update_xaxes(title_text="k", tickformat=",d")
     fig.update_layout(yaxis_title=yaxis_name, showlegend=False)
+    return fig
+
+
+def plot_bias(
+    curr: HistogramData,
+    curr_train: HistogramData,
+    ref: Optional[HistogramData],
+    ref_train: Optional[HistogramData],
+    xaxis_name: str,
+):
+    color_options = ColorOptions()
+
+    cols = 1
+    subplot_titles: Union[list, str] = ""
+    if ref is not None:
+        cols = 2
+        subplot_titles = ["current", "reference"]
+    fig = make_subplots(rows=1, cols=cols, shared_yaxes=True, subplot_titles=subplot_titles)
+    trace = go.Bar(
+        x=curr.x,
+        y=(curr.count / curr.count.sum()) * 100,
+        marker_color=color_options.get_current_data_color(),
+        name="recommendation",
+        legendgroup="recommendation",
+    )
+    fig.add_trace(trace, 1, 1)
+    trace = go.Bar(
+        x=curr_train.x,
+        y=(curr_train.count / curr_train.count.sum()) * 100,
+        marker_color=color_options.additional_data_color,
+        name="train",
+        legendgroup="train",
+    )
+    fig.add_trace(trace, 1, 1)
+    if ref is not None and ref_train is not None:
+        trace = go.Bar(
+            x=ref.x,
+            y=(ref.count / ref.count.sum()) * 100,
+            marker_color=color_options.get_current_data_color(),
+            name="recommendation",
+            legendgroup="recommendation",
+            showlegend=False,
+        )
+        fig.add_trace(trace, 1, 2)
+        trace = go.Bar(
+            x=ref_train.x,
+            y=(ref_train.count / ref_train.count.sum()) * 100,
+            marker_color=color_options.additional_data_color,
+            name="train",
+            legendgroup="train",
+            showlegend=False,
+        )
+        fig.add_trace(trace, 1, 2)
+    fig.update_layout(yaxis_title="percent")
+    fig.update_xaxes(title_text=xaxis_name)
+    return fig
+
+
+def plot_4_distr(
+    curr_1: HistogramData,
+    curr_2: Optional[HistogramData],
+    ref_1: Optional[HistogramData],
+    ref_2: Optional[HistogramData],
+    name_1: str,
+    name_2: str,
+    xaxis_name: str,
+    color_2: str = "additional",
+):
+    color_options = ColorOptions()
+    if color_2 == "additional":
+        color_2 = color_options.additional_data_color
+    else:
+        color_2 = color_options.secondary_color
+
+    cols = 1
+    subplot_titles: Union[list, str] = ""
+    if ref_1 is not None:
+        cols = 2
+        subplot_titles = ["current", "reference"]
+    fig = make_subplots(rows=1, cols=cols, shared_yaxes=True, subplot_titles=subplot_titles)
+    trace = go.Bar(
+        x=curr_1.x,
+        y=(curr_1.count / curr_1.count.sum()) * 100,
+        marker_color=color_options.get_current_data_color(),
+        name=name_1,
+        legendgroup=name_1,
+    )
+    fig.add_trace(trace, 1, 1)
+    if curr_2 is not None:
+        trace = go.Bar(
+            x=curr_2.x,
+            y=(curr_2.count / curr_2.count.sum()) * 100,
+            marker_color=color_2,
+            name=name_2,
+            legendgroup=name_2,
+        )
+        fig.add_trace(trace, 1, 1)
+    if ref_1 is not None:
+        trace = go.Bar(
+            x=ref_1.x,
+            y=(ref_1.count / ref_1.count.sum()) * 100,
+            marker_color=color_options.get_current_data_color(),
+            name=name_1,
+            legendgroup=name_1,
+            showlegend=False,
+        )
+        fig.add_trace(trace, 1, 2)
+    if ref_2 is not None:
+        trace = go.Bar(
+            x=ref_2.x,
+            y=(ref_2.count / ref_2.count.sum()) * 100,
+            marker_color=color_2,
+            name=name_2,
+            legendgroup=name_2,
+            showlegend=False,
+        )
+        fig.add_trace(trace, 1, 2)
+    fig.update_layout(yaxis_title="percent")
+    fig.update_xaxes(title_text=xaxis_name)
     return fig

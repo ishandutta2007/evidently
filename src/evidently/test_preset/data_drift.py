@@ -1,3 +1,4 @@
+from typing import Any
 from typing import Dict
 from typing import List
 from typing import Optional
@@ -7,6 +8,7 @@ import numpy as np
 from evidently.calculations.stattests import PossibleStatTestType
 from evidently.metrics.data_drift.embedding_drift_methods import DriftMethod
 from evidently.pipeline.column_mapping import TaskType
+from evidently.test_preset.test_preset import AnyTest
 from evidently.test_preset.test_preset import TestPreset
 from evidently.tests import TestAllFeaturesValueDrift
 from evidently.tests import TestColumnDrift
@@ -18,6 +20,9 @@ from evidently.utils.data_preprocessing import DataDefinition
 
 
 class DataDriftTestPreset(TestPreset):
+    class Config:
+        type_alias = "evidently:test_preset:DataDriftTestPreset"
+
     """
     Data Drift tests.
 
@@ -60,7 +65,6 @@ class DataDriftTestPreset(TestPreset):
         text_stattest_threshold: Optional[float] = None,
         per_column_stattest_threshold: Optional[Dict[str, float]] = None,
     ):
-        super().__init__()
         self.columns = columns
         self.embeddings = embeddings
         self.embeddings_drift_method = embeddings_drift_method
@@ -75,24 +79,28 @@ class DataDriftTestPreset(TestPreset):
         self.num_stattest_threshold = num_stattest_threshold
         self.text_stattest_threshold = text_stattest_threshold
         self.per_column_stattest_threshold = per_column_stattest_threshold
+        super().__init__()
 
-    def generate_tests(self, data_definition: DataDefinition):
-        embeddings_data = data_definition.embeddings()
+    def generate_tests(
+        self, data_definition: DataDefinition, additional_data: Optional[Dict[str, Any]]
+    ) -> List[AnyTest]:
+        embeddings_data = data_definition.embeddings
+        columns = self.columns
         if embeddings_data is not None:
             embs = list(set(v for values in embeddings_data.values() for v in values))
-            if self.columns is None:
-                self.columns = list(
+            if columns is None:
+                columns = list(
                     np.setdiff1d(
                         [column.column_name for column in data_definition.get_columns(features_only=True)],
                         embs,
                     )
                 )
             else:
-                self.columns = list(np.setdiff1d(self.columns, embs))
+                columns = list(np.setdiff1d(columns, embs))
 
         preset_tests: list = [
             TestShareOfDriftedColumns(
-                columns=self.columns,
+                columns=columns,
                 lt=0.3 if self.drift_share is None else self.drift_share,
                 stattest=self.stattest,
                 cat_stattest=self.cat_stattest,
@@ -111,7 +119,7 @@ class DataDriftTestPreset(TestPreset):
         if target_column is not None:
             stattest, threshold = resolve_stattest_threshold(
                 target_column.column_name,
-                "cat" if data_definition.task() == TaskType.CLASSIFICATION_TASK else "num",
+                "cat" if data_definition.task == TaskType.CLASSIFICATION_TASK else "num",
                 self.stattest,
                 self.cat_stattest,
                 self.num_stattest,
@@ -135,7 +143,7 @@ class DataDriftTestPreset(TestPreset):
         if prediction_columns is not None and prediction_columns.predicted_values is not None:
             stattest, threshold = resolve_stattest_threshold(
                 prediction_columns.predicted_values.column_name,
-                "cat" if data_definition.task() == TaskType.CLASSIFICATION_TASK else "num",
+                "cat" if data_definition.task == TaskType.CLASSIFICATION_TASK else "num",
                 self.stattest,
                 self.cat_stattest,
                 self.num_stattest,
@@ -157,7 +165,7 @@ class DataDriftTestPreset(TestPreset):
 
         preset_tests.append(
             TestAllFeaturesValueDrift(
-                self.columns,
+                columns,
                 self.stattest,
                 self.cat_stattest,
                 self.num_stattest,
@@ -173,8 +181,7 @@ class DataDriftTestPreset(TestPreset):
 
         if embeddings_data is None:
             return preset_tests
-        preset_tests = add_emb_drift_to_reports(
-            preset_tests,
+        preset_tests += add_emb_drift_to_reports(
             embeddings_data,
             self.embeddings,
             self.embeddings_drift_method,

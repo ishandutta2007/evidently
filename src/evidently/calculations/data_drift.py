@@ -5,6 +5,7 @@ from typing import Dict
 from typing import List
 from typing import Optional
 from typing import Sequence
+from typing import Tuple
 from typing import Union
 
 import numpy as np
@@ -34,13 +35,14 @@ Words = List[str]
 
 class DriftStatsField(MetricResult):
     class Config:
+        type_alias = "evidently:metric_result:DriftStatsField"
         dict_exclude_fields = {"characteristic_examples", "characteristic_words", "correlations"}
         # todo: after tests PR
         field_tags = {
             "characteristic_examples": {IncludeTags.Render},
             "characteristic_words": {IncludeTags.Render},
             "correlations": {IncludeTags.Render},
-            "type": {IncludeTags.TypeField},
+            "small_distribution": {IncludeTags.Extra},
         }
         pd_include = False
 
@@ -54,7 +56,14 @@ class DriftStatsField(MetricResult):
 class ColumnDataDriftMetrics(ColumnMetricResult):
     class Config:
         # todo: change to field_tags: render
+        type_alias = "evidently:metric_result:ColumnDataDriftMetrics"
         dict_exclude_fields = {"scatter"}
+        pd_exclude_fields = {"scatter"}
+        field_tags = {
+            "stattest_name": {IncludeTags.Parameter},
+            "current": {IncludeTags.Current},
+            "reference": {IncludeTags.Reference},
+        }
 
     stattest_name: str
     stattest_threshold: Optional[float]
@@ -78,6 +87,9 @@ class DatasetDrift:
 
 
 class DatasetDriftMetrics(MetricResult):
+    class Config:
+        type_alias = "evidently:metric_result:DatasetDriftMetrics"
+
     number_of_columns: int
     number_of_drifted_columns: int
     share_of_drifted_columns: float
@@ -94,21 +106,16 @@ def get_one_column_drift(
     column_name: str,
     options: DataDriftOptions,
     dataset_columns: DatasetColumns,
-    column_type: Union[str, ColumnType] = None,
+    column_type: ColumnType,
     agg_data: bool,
+    num_correlations: Optional[tuple] = None,
+    is_contains_nans: Optional[Tuple[pd.Series, pd.Series]] = None,
 ) -> ColumnDataDriftMetrics:
     if column_name not in current_data:
         raise ValueError(f"Cannot find column '{column_name}' in current dataset")
 
     if column_name not in reference_data:
         raise ValueError(f"Cannot find column '{column_name}' in reference dataset")
-
-    if isinstance(column_type, str):
-        column_type = ColumnType(column_type)
-    if column_type is None:
-        column_type = recognize_column_type_(
-            dataset=pd.concat([reference_data, current_data]), column_name=column_name, columns=dataset_columns
-        )
 
     if column_type not in (ColumnType.Numerical, ColumnType.Categorical, ColumnType.Text):
         raise ValueError(f"Cannot calculate drift metric for column '{column_name}' with type {column_type}")
@@ -129,7 +136,8 @@ def get_one_column_drift(
     reference_column = reference_data[column_name]
 
     # clean and check the column in reference dataset
-    reference_column = reference_column.replace([-np.inf, np.inf], np.nan).dropna()
+    if is_contains_nans is None or is_contains_nans[1][column_name]:
+        reference_column = reference_column.replace([-np.inf, np.inf], np.nan).dropna()
 
     if reference_column.empty:
         raise ValueError(
@@ -137,7 +145,8 @@ def get_one_column_drift(
         )
 
     # clean and check the column in current dataset
-    current_column = current_column.replace([-np.inf, np.inf], np.nan).dropna()
+    if is_contains_nans is None or is_contains_nans[0][column_name]:
+        current_column = current_column.replace([-np.inf, np.inf], np.nan).dropna()
 
     if current_column.empty:
         raise ValueError(f"An empty column '{column_name}' was provided for drift calculation in the current dataset.")
@@ -172,8 +181,11 @@ def get_one_column_drift(
             # for target and prediction cases add the column_name in the numeric columns list
             numeric_columns = numeric_columns + [column_name]
 
-        current_correlations = current_data[numeric_columns].corr()[column_name].to_dict()
-        reference_correlations = reference_data[numeric_columns].corr()[column_name].to_dict()
+        if num_correlations is None:
+            num_correlations = (current_data[numeric_columns].corr(), reference_data[numeric_columns].corr())
+
+        current_correlations = num_correlations[0][column_name].to_dict()
+        reference_correlations = num_correlations[1][column_name].to_dict()
         current_nbinsx = options.get_nbinsx(column_name)
         current_small_distribution = [
             t.tolist()
@@ -198,19 +210,23 @@ def get_one_column_drift(
                 current_scatter["Timestamp"] = current_data[datetime_column_name]
                 x_name = "Timestamp"
             else:
-                current_scatter["Index"] = current_data.index
+                current_scatter["Index"] = current_data.index.to_series()
                 x_name = "Index"
         else:
             current_scatter = {}
-            curr_data = current_data.copy()
-            curr_data.dropna(axis=0, how="any", inplace=True, subset=[column_name])
+            if is_contains_nans is None or is_contains_nans[0].any():
+                curr_data = current_data.copy()
+                curr_data.dropna(axis=0, how="any", inplace=True, subset=[column_name])
+            else:
+                curr_data = current_data
 
             df, prefix = prepare_df_for_time_index_plot(
                 curr_data,
                 column_name,
                 datetime_column_name,
             )
-            current_scatter["current (mean)"] = df
+            # TODO: assignment DataFrame to Series
+            current_scatter["current (mean)"] = df  # type: ignore[assignment]
             if prefix is None:
                 x_name = "Index binned"
             else:
@@ -239,9 +255,9 @@ def get_one_column_drift(
 
         for key in keys:
             if key not in reference_counts:
-                reference_counts.loc[key] = 0
+                reference_counts = pd.concat([reference_counts, pd.Series([0], index=[key])])
             if key not in current_counts:
-                current_counts.loc[key] = 0
+                current_counts = pd.concat([current_counts, pd.Series([0], index=[key])])
 
         reference_small_distribution = list(
             reversed(
@@ -280,8 +296,13 @@ def get_one_column_drift(
             if len(new_values) > 0:
                 raise ValueError(f"Values {new_values} not presented in 'target_names'")
             else:
-                current_column = current_column.map(dataset_columns.target_names)
-                reference_column = reference_column.map(dataset_columns.target_names)
+                target_names_mapping = (
+                    dataset_columns.target_names
+                    if isinstance(dataset_columns.target_names, dict)
+                    else {idx: value for (idx, value) in enumerate(dataset_columns.target_names)}
+                )
+                current_column = current_column.map(target_names_mapping)
+                reference_column = reference_column.map(target_names_mapping)
         current_distribution, reference_distribution = get_distribution_for_column(
             column_type=column_type.value,
             current=current_column,
@@ -351,7 +372,7 @@ def ensure_prediction_column_is_string(
     - if prediction column is None or a string, no dataset changes
     - (binary classification) if predictions is a list and its length equals 2
         set predicted_labels column by `threshold`
-    - (multy label classification) if predictions is a list and its length is greater than 2
+    - (multi label classification) if predictions is a list and its length is greater than 2
         set predicted_labels from probability values in columns by prediction column
 
 
@@ -438,14 +459,53 @@ def get_drift_for_columns(
     # calculate result
     drift_by_columns: Dict[str, ColumnDataDriftMetrics] = {}
 
+    dataset = pd.concat([reference_data, current_data])
+    columns_types = {
+        column_name: recognize_column_type_(
+            dataset=dataset,
+            column_name=column_name,
+            columns=dataset_columns,
+        )
+        for column_name in columns
+    }
+
+    num_columns = [k for k, v in columns_types.items() if v == ColumnType.Numerical]
+
+    is_current_contains_nans = current_data.isna().any()
+    if is_current_contains_nans[num_columns].any():
+        current_correlations = current_data[num_columns].corr()
+    else:
+        current_correlations = pd.DataFrame(
+            data=np.corrcoef(current_data[num_columns].values, rowvar=False),
+            columns=num_columns,
+            index=num_columns,
+        )
+
+    is_reference_contains_nans = reference_data.isna().any()
+    if is_reference_contains_nans[num_columns].any():
+        reference_correlations = reference_data[num_columns].corr()
+    else:
+        reference_correlations = pd.DataFrame(
+            data=np.corrcoef(reference_data[num_columns].values, rowvar=False),
+            columns=num_columns,
+            index=num_columns,
+        )
+    num_correlations = (
+        current_correlations,
+        reference_correlations,
+    )
+
     for column_name in columns:
         drift_by_columns[column_name] = get_one_column_drift(
             current_data=current_data,
             reference_data=reference_data,
             column_name=column_name,
+            column_type=columns_types[column_name],
             options=data_drift_options,
             dataset_columns=dataset_columns,
             agg_data=agg_data,
+            num_correlations=num_correlations,
+            is_contains_nans=(is_current_contains_nans, is_reference_contains_nans),
         )
 
     dataset_drift = get_dataset_drift(drift_by_columns, drift_share_threshold)

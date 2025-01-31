@@ -3,6 +3,7 @@ import pandas as pd
 
 from evidently.metrics import MAPKMetric
 from evidently.pipeline.column_mapping import ColumnMapping
+from evidently.pipeline.column_mapping import RecomType
 from evidently.report import Report
 
 
@@ -17,14 +18,14 @@ def test_map_value():
 
     metric = MAPKMetric(k=2)
     report = Report(metrics=[metric])
-    column_mapping = ColumnMapping(recommendations_type="rank")
+    column_mapping = ColumnMapping(recommendations_type=RecomType.RANK)
     report.run(reference_data=None, current_data=current, column_mapping=column_mapping)
 
     results = metric.get_result()
     assert len(results.current) == 3
+    assert np.isclose(results.current[0], 0.5)
     assert np.isclose(results.current[1], 0.5)
-    assert np.isclose(results.current[2], 0.5)
-    assert np.isclose(results.current[3], 0.6666666)
+    assert np.isclose(results.current[2], 0.6666666)
 
 
 def test_map_value_judged_only():
@@ -38,14 +39,14 @@ def test_map_value_judged_only():
 
     metric = MAPKMetric(k=3, no_feedback_users=True)
     report = Report(metrics=[metric])
-    column_mapping = ColumnMapping(recommendations_type="rank")
+    column_mapping = ColumnMapping(recommendations_type=RecomType.RANK)
     report.run(reference_data=None, current_data=current, column_mapping=column_mapping)
 
     results = metric.get_result()
     assert len(results.current) == 3
+    assert np.isclose(results.current[0], 0.3333333)
     assert np.isclose(results.current[1], 0.3333333)
-    assert np.isclose(results.current[2], 0.3333333)
-    assert np.isclose(results.current[3], 0.4444444)
+    assert np.isclose(results.current[2], 0.4444444)
 
 
 def test_map_value_judged_only_scores():
@@ -64,6 +65,6 @@ def test_map_value_judged_only_scores():
 
     results = metric.get_result()
     assert len(results.current) == 3
+    assert np.isclose(results.current[0], 0.3333333)
     assert np.isclose(results.current[1], 0.3333333)
-    assert np.isclose(results.current[2], 0.3333333)
-    assert np.isclose(results.current[3], 0.4444444)
+    assert np.isclose(results.current[2], 0.4444444)

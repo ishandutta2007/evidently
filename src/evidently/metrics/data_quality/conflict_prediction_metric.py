@@ -4,6 +4,7 @@ from typing import Optional
 from evidently.base_metric import InputData
 from evidently.base_metric import Metric
 from evidently.base_metric import MetricResult
+from evidently.core import IncludeTags
 from evidently.model.widget import BaseWidgetInfo
 from evidently.renderers.base_renderer import MetricRenderer
 from evidently.renderers.base_renderer import default_renderer
@@ -14,16 +15,26 @@ from evidently.utils.data_operations import process_columns
 
 
 class ConflictPredictionData(MetricResult):
+    class Config:
+        type_alias = "evidently:metric_result:ConflictPredictionData"
+
     number_not_stable_prediction: int
     share_not_stable_prediction: float
 
 
 class ConflictPredictionMetricResults(MetricResult):
+    class Config:
+        type_alias = "evidently:metric_result:ConflictPredictionMetricResults"
+        field_tags = {"current": {IncludeTags.Current}, "reference": {IncludeTags.Reference}}
+
     current: ConflictPredictionData
     reference: Optional[ConflictPredictionData]
 
 
 class ConflictPredictionMetric(Metric[ConflictPredictionMetricResults]):
+    class Config:
+        type_alias = "evidently:metric:ConflictPredictionMetric"
+
     def calculate(self, data: InputData) -> ConflictPredictionMetricResults:
         dataset_columns = process_columns(data.current_data, data.column_mapping)
         prediction_name = dataset_columns.utility_columns.prediction

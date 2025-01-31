@@ -1,4 +1,5 @@
 from typing import List
+from typing import Literal
 from typing import Optional
 from typing import Tuple
 
@@ -173,13 +174,27 @@ def approx(value, relative=None, absolute=None):
     return ApproxValue(value=value, relative=relative, absolute=absolute)
 
 
+class ApproxValueNoDict(ApproxValue):
+    def dict(self, *args, **kwargs):
+        return self
+
+
+# some monkeing for np asserts to work with ApproxValue
+np.core.numeric.ScalarType = np.core.numeric.ScalarType + (ApproxValue, ApproxValueNoDict)  # type: ignore[attr-defined]
+
+
+def approx_result(value, relative=None, absolute=None):
+    """Get approximate value for checking a value is equal to other within some tolerance"""
+    return ApproxValueNoDict(value=value, relative=relative, absolute=absolute)
+
+
 def dataframes_to_table(
     current: pd.DataFrame,
     reference: Optional[pd.DataFrame],
     columns: List[str],
     table_id: str,
     sort_by: str = "curr",
-    na_position: str = "first",
+    na_position: Literal["first", "last"] = "first",
     asc: bool = False,
 ):
     display_columns = ["display"]

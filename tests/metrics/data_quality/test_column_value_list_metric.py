@@ -5,6 +5,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from evidently._pydantic_compat import parse_obj_as
 from evidently.metrics import ColumnValueListMetric
 from evidently.metrics.data_quality.column_value_list_metric import ColumnValueListMetricResult
 from evidently.metrics.data_quality.column_value_list_metric import ValueListStat
@@ -27,15 +28,15 @@ from evidently.report import Report
                     number_not_in_list=0,
                     share_in_list=0,
                     share_not_in_list=0,
-                    values_in_list={},
-                    values_not_in_list={},
+                    values_in_list=[],
+                    values_not_in_list=[],
                     rows_count=0,
                 ),
                 reference=None,
             ),
         ),
         (
-            pd.DataFrame({"category_feature": [np.NaN, np.NaN, np.NaN]}),
+            pd.DataFrame({"category_feature": [np.nan, np.nan, np.nan]}),
             None,
             ColumnValueListMetric(column_name="category_feature", values=["test"]),
             ColumnValueListMetricResult(
@@ -46,15 +47,15 @@ from evidently.report import Report
                     number_not_in_list=3,
                     share_in_list=0,
                     share_not_in_list=1,
-                    values_in_list={"test": 0},
-                    values_not_in_list={},
+                    values_in_list=[("test", 0)],
+                    values_not_in_list=[],
                     rows_count=3,
                 ),
                 reference=None,
             ),
         ),
         (
-            pd.DataFrame({"category_feature": [1, np.NaN, 1, 2]}),
+            pd.DataFrame({"category_feature": [1, np.nan, 1, 2]}),
             None,
             ColumnValueListMetric(column_name="category_feature", values=[1, 2, 3]),
             ColumnValueListMetricResult(
@@ -65,8 +66,8 @@ from evidently.report import Report
                     number_not_in_list=1,
                     share_in_list=0.75,
                     share_not_in_list=0.25,
-                    values_in_list={2: 1, 1: 2, 3: 0},
-                    values_not_in_list={},
+                    values_in_list=[(1, 2), (2, 1), (3, 0)],
+                    values_not_in_list=[],
                     rows_count=4,
                 ),
                 reference=None,
@@ -84,8 +85,8 @@ from evidently.report import Report
                     number_not_in_list=3,
                     share_in_list=0.25,
                     share_not_in_list=0.75,
-                    values_in_list={"d": 1},
-                    values_not_in_list={"n": 2, "p": 1},
+                    values_in_list=[("d", 1)],
+                    values_not_in_list=[("n", 2), ("p", 1)],
                     rows_count=4,
                 ),
                 reference=None,
@@ -103,8 +104,8 @@ from evidently.report import Report
                     number_not_in_list=2,
                     share_in_list=0.5,
                     share_not_in_list=0.5,
-                    values_in_list={2: 2},
-                    values_not_in_list={432: 1, 0: 1},
+                    values_in_list=[(2, 2)],
+                    values_not_in_list=[(0, 1), (432, 1)],
                     rows_count=4,
                 ),
                 reference=None,
@@ -122,8 +123,8 @@ from evidently.report import Report
                     number_not_in_list=0,
                     share_in_list=1.0,
                     share_not_in_list=0.0,
-                    values_in_list={"n": 2, "p": 1, "d": 1},
-                    values_not_in_list={},
+                    values_in_list=[("n", 2), ("d", 1), ("p", 1)],
+                    values_not_in_list=[],
                     rows_count=4,
                 ),
                 reference=ValueListStat(
@@ -131,8 +132,8 @@ from evidently.report import Report
                     number_not_in_list=0,
                     share_in_list=1.0,
                     share_not_in_list=0.0,
-                    values_in_list={"n": 2, "p": 1, "d": 1},
-                    values_not_in_list={},
+                    values_in_list=[("n", 2), ("d", 1), ("p", 1)],
+                    values_not_in_list=[],
                     rows_count=4,
                 ),
             ),
@@ -181,7 +182,7 @@ def test_data_quality_value_list_metric_success(
         ),
         (
             pd.DataFrame({"feature": [1, 2, 3]}),
-            pd.DataFrame({"feature": [np.NaN]}),
+            pd.DataFrame({"feature": [np.nan]}),
             ColumnValueListMetric(column_name="feature", values=[]),
             "Values list should not be empty.",
         ),
@@ -202,7 +203,7 @@ def test_data_quality_value_list_metric_value_errors(
 
 
 @pytest.mark.parametrize(
-    "current_data, reference_data, metric, expected_json",
+    "current_data, reference_data, metric, old_json",
     (
         (
             pd.DataFrame({"col": [1, 2, 3]}),
@@ -216,8 +217,8 @@ def test_data_quality_value_list_metric_value_errors(
                     "rows_count": 3,
                     "share_in_list": 0.3333333333333333,
                     "share_not_in_list": 0.6666666666666666,
-                    "values_in_list": {"1": 1},
-                    "values_not_in_list": {"2": 1, "3": 1},
+                    "values_in_list": [[1, 1]],
+                    "values_not_in_list": [[2, 1], [3, 1]],
                 },
                 "reference": None,
                 "values": [1],
@@ -240,8 +241,8 @@ def test_data_quality_value_list_metric_value_errors(
                     "rows_count": 3,
                     "share_in_list": 0.0,
                     "share_not_in_list": 1.0,
-                    "values_in_list": {"10.0": 0, "20.0": 0, "3.5": 0},
-                    "values_not_in_list": {"1": 1, "2": 1, "3": 1},
+                    "values_in_list": [[10.0, 0], [20.0, 0], [3.5, 0]],
+                    "values_not_in_list": [[1, 1], [2, 1], [3, 1]],
                 },
                 "reference": {
                     "number_in_list": 3,
@@ -249,8 +250,74 @@ def test_data_quality_value_list_metric_value_errors(
                     "rows_count": 3,
                     "share_in_list": 1.0,
                     "share_not_in_list": 0.0,
-                    "values_in_list": {"10.0": 1, "20.0": 1, "3.5": 1},
-                    "values_not_in_list": {},
+                    "values_in_list": [[10.0, 1], [20.0, 1], [3.5, 1]],
+                    "values_not_in_list": [],
+                },
+                "values": [10.0, 20.0, 3.5],
+            },
+        ),
+    ),
+)
+def test_data_quality_value_list_metric_with_report_compat(
+    current_data: pd.DataFrame, reference_data: pd.DataFrame, metric: ColumnValueListMetric, old_json: dict
+):
+    report = Report(metrics=[metric])
+    report.run(current_data=current_data, reference_data=reference_data, column_mapping=ColumnMapping())
+
+    result = parse_obj_as(ColumnValueListMetricResult, old_json)
+    assert metric.get_result() == result
+
+
+@pytest.mark.parametrize(
+    "current_data, reference_data, metric, expected_json",
+    (
+        (
+            pd.DataFrame({"col": [1, 2, 3]}),
+            None,
+            ColumnValueListMetric(column_name="col", values=[1]),
+            {
+                "column_name": "col",
+                "current": {
+                    "number_in_list": 1,
+                    "number_not_in_list": 2,
+                    "rows_count": 3,
+                    "share_in_list": 0.3333333333333333,
+                    "share_not_in_list": 0.6666666666666666,
+                    "values_in_list_dist": {"x": [1], "y": [1]},
+                    "values_not_in_list_dist": {"x": [2, 3], "y": [1, 1]},
+                },
+                "reference": None,
+                "values": [1],
+            },
+        ),
+        (
+            pd.DataFrame({"col1": [1, 2, 3], "col2": [10, 20, 3.5]}),
+            pd.DataFrame(
+                {
+                    "col1": [10, 20, 3.5],
+                    "col2": [1, 2, 3],
+                }
+            ),
+            ColumnValueListMetric(column_name="col1"),
+            {
+                "column_name": "col1",
+                "current": {
+                    "number_in_list": 0,
+                    "number_not_in_list": 3,
+                    "rows_count": 3,
+                    "share_in_list": 0.0,
+                    "share_not_in_list": 1.0,
+                    "values_in_list_dist": {"x": [10.0, 20.0, 3.5], "y": [0, 0, 0]},
+                    "values_not_in_list_dist": {"x": [1, 2, 3], "y": [1, 1, 1]},
+                },
+                "reference": {
+                    "number_in_list": 3,
+                    "number_not_in_list": 0,
+                    "rows_count": 3,
+                    "share_in_list": 1.0,
+                    "share_not_in_list": 0.0,
+                    "values_in_list_dist": {"x": [10.0, 20.0, 3.5], "y": [1, 1, 1]},
+                    "values_not_in_list_dist": {"x": [], "y": []},
                 },
                 "values": [10.0, 20.0, 3.5],
             },

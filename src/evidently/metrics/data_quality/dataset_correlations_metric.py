@@ -13,6 +13,7 @@ from evidently.base_metric import MetricResult
 from evidently.calculations.classification_performance import get_prediction_data
 from evidently.calculations.data_quality import calculate_correlations
 from evidently.core import ColumnType
+from evidently.core import IncludeTags
 from evidently.features.non_letter_character_percentage_feature import NonLetterCharacterPercentage
 from evidently.features.OOV_words_percentage_feature import OOVWordsPercentage
 from evidently.features.text_length_feature import TextLength
@@ -32,6 +33,15 @@ from evidently.utils.data_preprocessing import PredictionColumns
 
 
 class CorrelationStats(MetricResult):
+    class Config:
+        type_alias = "evidently:metric_result:CorrelationStats"
+        field_tags = {
+            "abs_max_target_features_correlation": {IncludeTags.Extra},
+            "abs_max_prediction_features_correlation": {IncludeTags.Extra},
+            "abs_max_correlation": {IncludeTags.Extra},
+            "abs_max_features_correlation": {IncludeTags.Extra},
+        }
+
     target_prediction_correlation: Optional[float] = None
     abs_max_target_features_correlation: Optional[float] = None
     abs_max_prediction_features_correlation: Optional[float] = None
@@ -41,8 +51,12 @@ class CorrelationStats(MetricResult):
 
 class DatasetCorrelation(MetricResult):
     class Config:
+        type_alias = "evidently:metric_result:DatasetCorrelation"
         dict_exclude_fields = {"correlation", "correlations_calculate"}
+        pd_include = False
         pd_exclude_fields = {"correlation", "correlations_calculate"}
+
+        field_tags = {"correlations_calculate": {IncludeTags.Extra}}
 
     correlation: Dict[str, pd.DataFrame]
     stats: Dict[str, CorrelationStats]
@@ -51,8 +65,14 @@ class DatasetCorrelation(MetricResult):
 
 class DatasetCorrelationsMetricResult(MetricResult):
     class Config:
+        type_alias = "evidently:metric_result:DatasetCorrelationsMetricResult"
         dict_exclude_fields = {"target_correlation"}
         pd_exclude_fields = {"target_correlation"}
+        field_tags = {
+            "current": {IncludeTags.Current},
+            "reference": {IncludeTags.Reference},
+            "target_correlation": {IncludeTags.Parameter},
+        }
 
     current: DatasetCorrelation
     reference: Optional[DatasetCorrelation]
@@ -60,6 +80,9 @@ class DatasetCorrelationsMetricResult(MetricResult):
 
 
 class DatasetCorrelationsMetric(Metric[DatasetCorrelationsMetricResult]):
+    class Config:
+        type_alias = "evidently:metric:DatasetCorrelationsMetric"
+
     """Calculate different correlations with target, predictions and features"""
 
     _text_features_gen: Optional[
@@ -117,8 +140,14 @@ class DatasetCorrelationsMetric(Metric[DatasetCorrelationsMetricResult]):
         # fill diagonal with 1 values for getting abs max values
         np.fill_diagonal(correlation_matrix.values, 0)
 
-        if prediction_name in correlation_matrix and target_name in correlation_matrix:
-            target_prediction_correlation = correlation_matrix.loc[prediction_name, target_name]
+        target_prediction_correlation: Optional[pd.DataFrame]
+        if (
+            prediction_name is not None
+            and target_name is not None
+            and prediction_name in correlation_matrix
+            and target_name in correlation_matrix
+        ):
+            target_prediction_correlation = correlation_matrix.loc[prediction_name, target_name]  # type: ignore[assignment]
 
             if pd.isnull(target_prediction_correlation):
                 target_prediction_correlation = None
@@ -126,8 +155,10 @@ class DatasetCorrelationsMetric(Metric[DatasetCorrelationsMetricResult]):
         else:
             target_prediction_correlation = None
 
-        if target_name in correlation_matrix:
-            abs_max_target_features_correlation = correlation_matrix.loc[target_name, columns_corr].abs().max()
+        abs_max_target_features_correlation: Optional[pd.Series]
+        if target_name is not None and target_name in correlation_matrix:
+            cols = [target_name] + columns_corr
+            abs_max_target_features_correlation = correlation_matrix.loc[cols].abs().max().max()
 
             if pd.isnull(abs_max_target_features_correlation):
                 abs_max_target_features_correlation = None
@@ -135,8 +166,10 @@ class DatasetCorrelationsMetric(Metric[DatasetCorrelationsMetricResult]):
         else:
             abs_max_target_features_correlation = None
 
-        if prediction_name in correlation_matrix:
-            abs_max_prediction_features_correlation = correlation_matrix.loc[prediction_name, columns_corr].abs().max()
+        abs_max_prediction_features_correlation: Optional[pd.Series]
+        if prediction_name is not None and prediction_name in correlation_matrix:
+            cols = [prediction_name] + columns_corr
+            abs_max_prediction_features_correlation = correlation_matrix.loc[cols].abs().max().max()
 
             if pd.isnull(abs_max_prediction_features_correlation):
                 abs_max_prediction_features_correlation = None
@@ -224,21 +257,21 @@ class DatasetCorrelationsMetric(Metric[DatasetCorrelationsMetricResult]):
             if ref_df is not None:
                 prediction_ref = get_prediction_data(ref_df, columns, data.column_mapping.pos_label)
                 ref_df[prediction_labels_name] = prediction_ref.predictions
-            data_definition._prediction_columns = PredictionColumns(
+            data_definition.prediction_columns = PredictionColumns(
                 prediction_probas=prediction_data.prediction_probas,
                 predicted_values=ColumnDefinition(prediction_labels_name, target_type),
             )
-            data_definition._columns[prediction_labels_name] = ColumnDefinition(prediction_labels_name, target_type)
+            data_definition.columns[prediction_labels_name] = ColumnDefinition(prediction_labels_name, target_type)
 
         # process text columns
         text_columns = []
         if self._text_features_gen is not None:
             for col in list(self._text_features_gen.keys()):
                 curr_text_df = pd.concat(
-                    [data.get_current_column(x.feature_name()) for x in list(self._text_features_gen[col].values())],
+                    [data.get_current_column(x.as_column()) for x in list(self._text_features_gen[col].values())],
                     axis=1,
                 )
-                curr_text_df.columns = list(self._text_features_gen[col].keys())
+                curr_text_df.columns = pd.Index(list(self._text_features_gen[col].keys()))
                 text_columns.append(list(curr_text_df.columns))
                 curr_df = pd.concat(
                     [
@@ -250,13 +283,10 @@ class DatasetCorrelationsMetric(Metric[DatasetCorrelationsMetricResult]):
 
                 if ref_df is not None:
                     ref_text_df = pd.concat(
-                        [
-                            data.get_reference_column(x.feature_name())
-                            for x in list(self._text_features_gen[col].values())
-                        ],
+                        [data.get_reference_column(x.as_column()) for x in list(self._text_features_gen[col].values())],
                         axis=1,
                     )
-                    ref_text_df.columns = list(self._text_features_gen[col].keys())
+                    ref_text_df.columns = pd.Index(list(self._text_features_gen[col].keys()))
                     ref_df = pd.concat(
                         [
                             ref_df.copy().reset_index(drop=True),

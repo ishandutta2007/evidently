@@ -7,6 +7,8 @@ from typing import Set
 from typing import Tuple
 from typing import Union
 
+from _pytest.mark import Mark
+from _pytest.mark import ParameterSet
 from _pytest.python import Metafunc
 
 from evidently.base_metric import Metric
@@ -18,11 +20,20 @@ from tests.multitest.datasets import dataset_fixtures
 OutcomeKeyType = Union[str, DatasetTags]
 OutcomeKey = Tuple[OutcomeKeyType, ...]
 
+REFRESH_FINGERPRINT_VALUES = False
+_code_cache: Dict[str, List[str]] = {}
 
-@dataclasses.dataclass
+if hasattr(dataclasses, "KW_ONLY"):
+    dec = dataclasses.dataclass(kw_only=True)
+else:
+    dec = dataclasses.dataclass()
+
+
+@dec
 class TestMetric:
     name: str
     metric: Metric
+    fingerprint: str
     outcomes: Union[TestOutcome, Dict[Union[str, OutcomeKey, TestDataset], TestOutcome]]
 
     include_tags: List[DatasetTags] = dataclasses.field(default_factory=list)
@@ -35,8 +46,40 @@ class TestMetric:
     datasets: Optional[List[TestDataset]] = None
     """Only run on those datasets"""
 
+    marks: List[Mark] = dataclasses.field(default_factory=list)
     # additional_check: Optional[Callable[[Report], None]] = None
     # """Additional callable to call on report"""
+
+    if REFRESH_FINGERPRINT_VALUES:
+
+        def __post_init__(self):
+            import inspect
+
+            fingerprint = self.metric.get_fingerprint()
+            if self.fingerprint is None or self.fingerprint != fingerprint:
+                stack = inspect.stack()
+                init_call = stack[2]
+                if init_call.filename not in _code_cache:
+                    with open(init_call.filename, "r", encoding="utf8") as f:
+                        _code_cache[init_call.filename] = list(f.readlines())
+
+                lines = _code_cache[init_call.filename]
+                if self.fingerprint is None:
+                    lineno = init_call.lineno - 1
+                    line = lines[lineno]
+                    if "TestMetric(" not in line:
+                        raise Exception(f"Cannot find TestMetric init in line {line}")
+                    lines[lineno] = line.replace("TestMetric(", f'TestMetric(\nfingerprint="{fingerprint}",')
+                if self.fingerprint is not None and self.fingerprint != fingerprint:
+                    template = f'fingerprint="{self.fingerprint}"'
+                    for i, line in list(enumerate(lines)):
+                        if template in line:
+                            lines[i] = line.replace(template, f'fingerprint="{fingerprint}"')
+                            break
+                    else:
+                        raise Exception(f"Cound not find line with {template}")
+                with open(init_call.filename, "w", encoding="utf8") as f:
+                    f.write("".join(lines))
 
     def get_outcome(self, dataset: TestDataset) -> TestOutcome:
         if isinstance(self.outcomes, TestOutcome):
@@ -77,7 +120,11 @@ metric_fixtures = []
 
 
 def metric(f):
-    metric_fixtures.append(f())
+    m = f()
+    if isinstance(m, list):
+        metric_fixtures.extend(m)
+    else:
+        metric_fixtures.append(m)
     return f
 
 
@@ -98,11 +145,16 @@ def generate_dataset_outcome(m: TestMetric):
         is_included = m.include_tags == [] or all(t in d.tags for t in m.include_tags)
         is_excluded = any(t in m.exclude_tags for t in d.tags)
         if is_included and not is_excluded:
-            yield m, i, d, m.get_outcome(d)
+            yield (
+                m,
+                i,
+                d,
+                m.get_outcome(d),
+            )
 
 
 def load_test_metrics():
-    for module in ["classification", "data_integrity", "data_drift", "data_quality", "recsys", "regression"]:
+    for module in ["classification", "data_integrity", "data_drift", "data_quality", "recsys", "regression", "custom"]:
         import_module(f"tests.multitest.metrics.{module}")
 
 
@@ -128,4 +180,6 @@ def pytest_generate_tests(metafunc: Metafunc):
         ([m, d, o], f"{m.name}-{d.name or i}-{o.__class__.__name__}")
         for m, i, d, o in generate_metric_dataset_outcome()
     ]
-    metafunc.parametrize("tmetric,tdataset,outcome", [p[0] for p in parameters], ids=[p[1] for p in parameters])
+    metafunc.parametrize(
+        "tmetric,tdataset,outcome", [ParameterSet(values, values[0].marks, id_) for values, id_ in parameters]
+    )
