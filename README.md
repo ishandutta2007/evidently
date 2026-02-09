@@ -13,6 +13,8 @@
 <p align="center">
   <a href="https://docs.evidentlyai.com">Documentation</a>
   |
+  <a href="https://evidentlyai.github.io/evidently/api-reference">API Reference</a>
+  |
   <a href="https://discord.gg/xZjKRaNp8b">Discord Community</a>
   |
   <a href="https://evidentlyai.com/blog">Blog</a>
@@ -226,6 +228,8 @@ We welcome contributions! Read the [Guide](CONTRIBUTING.md) to learn more.
 
 # :books: Documentation
 For more examples, refer to the complete <a href="https://docs.evidentlyai.com">Documentation</a>.
+
+Browse the <a href="https://evidentlyai.github.io/evidently/api-reference">API Reference</a> for detailed API documentation.
 
 # :white_check_mark: Discord Community
 If you want to chat and connect, join our [Discord community](https://discord.gg/xZjKRaNp8b)!
